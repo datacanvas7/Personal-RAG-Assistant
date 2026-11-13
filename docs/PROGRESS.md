@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 3 — implemented and unit-tested; awaiting CI confirmation** (2026-11-13)
+Current phase: **Phase 3 — complete and verified in CI; awaiting approval to start Phase 4** (2026-11-13)
 
 ---
 
@@ -69,8 +69,8 @@ Rate limiting of login is in Phase 10.
 
 ## Phase 3 — Document Ingestion
 
-Status: **implemented; 172 unit tests, ruff and mypy strict pass locally. The database
-integration tests for this phase run only in CI and are not yet confirmed (see "Pending CI").**
+Status: **complete and verified in CI (commit `d1ff2b7`, 2026-11-13).** 172 unit tests, ruff and
+mypy strict pass locally; the database integration tests and the Compose smoke test pass in CI.
 
 - [x] Upload endpoint with validation (extension allow-list, magic bytes, empty, size, filename sanitising); `Content-Length` pre-check middleware
 - [x] Storage backend (local volume, generated names, atomic write, path-escape guard) behind a `FileStorage` interface
@@ -82,11 +82,14 @@ integration tests for this phase run only in CI and are not yet confirmed (see "
 - [x] Document upload / list / detail / status / retry / delete endpoints (foreign ids return 404)
 - [x] Migration `0002`: `total_pages`, `total_chunks`, unique `(user_id, content_sha256)`
 - [x] Unit tests: validation, cleaning, chunking, each loader, storage, pipeline success / failure / repeat / deleted-meanwhile, API incl. isolation, duplicates, broker outage
-- [ ] **Pending CI:** integration tests (`tests/integration/test_documents_flow.py`) against real PostgreSQL: each file type end to end with page numbers, repeat and redelivery leave no duplicates, a failed write keeps the previous chunks, delete cascades, isolation, migration `0002` up/down
-- [ ] **Pending CI:** Compose smoke test still healthy with the shared `uploads` volume
+- [x] Integration tests (`tests/integration/test_documents_flow.py`) against real PostgreSQL — **passing in CI**: each file type end to end with page numbers, repeat and redelivery leave no duplicates, a failed write keeps the previous chunks, delete cascades, isolation, broker outage then retry, migration `0002` up/down
+- [x] Compose smoke test still healthy with the shared `uploads` volume — **passing in CI**
 - **Exit:** uploading each file type yields correct chunks with page numbers; a
-  failed or repeated job leaves no partial or duplicate chunks. *Met by the unit tests with
-  fakes; confirmation against the real database is pending CI.*
+  failed or repeated job leaves no partial or duplicate chunks — **met (CI green, 2026-11-13)**.
+
+CI caught one defect the fakes could not: after a status change, `documents.updated_at`
+(database-generated) was expired, and the async session cannot lazy-load it when the response
+is built (`MissingGreenlet`). Fixed with `eager_defaults` on `Document`.
 
 Deviations from the plan: PyMuPDF is pinned to 1.28 (2.x pulls in onnxruntime and numpy);
 chunk size and overlap are measured in characters, not tokens (no tokenizer is needed until
