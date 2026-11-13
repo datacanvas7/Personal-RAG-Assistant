@@ -28,6 +28,10 @@ class DocumentStatus(enum.StrEnum):
 
 class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "documents"
+    # Read database-generated values (updated_at) back with the UPDATE itself. Otherwise the
+    # attribute is expired after a status change and serializing the document in the async
+    # API would try to lazy-load it, which async sessions cannot do.
+    __mapper_args__ = {"eager_defaults": True}  # noqa: RUF012
     __table_args__ = (
         # Lets child tables reference (id, user_id) so the database itself refuses a
         # child row whose owner differs from its parent's owner.
