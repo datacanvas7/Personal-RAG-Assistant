@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 2 — code complete; database-backed tests await CI** (2026-11-13)
+Current phase: **Phase 2 — complete and verified in CI; awaiting approval to start Phase 3** (2026-11-13)
 
 ---
 
@@ -50,11 +50,16 @@ Current phase: **Phase 2 — code complete; database-backed tests await CI** (20
 - [x] Register, login, refresh (rotation + reuse detection), logout, `GET /users/me`
 - [x] Argon2id hashing; HS256 JWT validation dependency; uniform `{"error": {...}}` responses
 - [x] Auth tests against in-memory fakes: 63 unit tests, ruff, mypy strict pass locally
-- [ ] **Not yet verified (no PostgreSQL on this machine):** the 19 database integration tests
-  (migration up/down, migration-vs-models drift, constraints, cascades, vector dimension, auth
-  flow incl. concurrent registration and concurrent refresh) — they run in CI only
-- [ ] Compose `migrate` one-shot service and the auth smoke test in CI
-- **Exit:** migrations apply to an empty DB; auth test suite passes (**both in CI**).
+- [x] 19 database integration tests against real PostgreSQL + pgvector (migration up/down,
+  migration-vs-models drift, constraints, cascades, vector dimension, auth flow incl. concurrent
+  registration and concurrent refresh) — **passing in CI** (run on commit `1d11c90`). They do not
+  run locally (no PostgreSQL on the dev machine).
+- [x] Compose `migrate` one-shot service and the auth smoke test through the frontend proxy — **passing in CI**
+- **Exit:** migrations apply to an empty DB; auth test suite passes — **met (CI green, 2026-11-13)**.
+
+CI also caught two real defects that local tests could not: the `astral-sh/setup-uv@v10` tag
+does not exist (fixed by pinning `v10.3.3`; this had broken the Phase 1 CI run too), and the
+models' unique-constraint names disagreed with the migration (fixed; the drift test caught it).
 
 Deferred from the architecture's schema, to be added by the phase that needs it:
 `users.full_name`; `documents.total_pages/total_chunks/embedding_model` and the
