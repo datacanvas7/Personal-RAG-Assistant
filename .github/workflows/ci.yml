@@ -43,7 +43,7 @@ jobs:
       JWT_SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
