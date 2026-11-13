@@ -9,8 +9,7 @@ database (CI does; see ``tests/integration/conftest.py``).
 """
 
 import os
-from collections.abc import Generator
-from typing import Any
+import sys
 
 import pytest
 
@@ -19,14 +18,23 @@ os.environ.setdefault("POSTGRES_PASSWORD", "test-password")
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-key-not-for-real-use-0123456789")
 
 
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Generator[None]:
-    """On GitHub Actions, turn a failing test into an inline annotation on the run page,
-    so the cause is visible without opening the raw log."""
-    outcome: Any = yield
-    report = outcome.get_result()
+def _annotate(title: str, details: str) -> None:
+    """Emit a GitHub Actions error annotation, visible on the run page without raw logs.
+
+    Written to the real stdout: pytest captures ``sys.stdout`` while a test runs, so a plain
+    ``print`` from inside a hook would never reach the log.
+    """
+    tail = "\n".join(details.strip().splitlines()[-15:])[-1800:]
+    tail = tail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    sys.__stdout__.write(f"\n::error title={title}::{tail}\n")  # type: ignore[union-attr]
+    sys.__stdout__.flush()  # type: ignore[union-attr]
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     if report.failed and os.environ.get("GITHUB_ACTIONS") == "true":
-        message = (call.excinfo.exconly() if call.excinfo else "failed").splitlines()[0]
-        # Workflow-command values must escape %, CR and LF.
-        message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        print(f"::error title={item.nodeid}::{message}")
+        _annotate(f"{report.nodeid} ({report.when})", report.longreprtext)
+
+
+def pytest_collectreport(report: pytest.CollectReport) -> None:
+    if report.failed and os.environ.get("GITHUB_ACTIONS") == "true":
+        _annotate(f"{report.nodeid} (collection)", report.longreprtext)
