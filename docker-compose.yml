@@ -19,6 +19,12 @@ x-backend-environment: &backend-environment
   CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
   CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
   BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-}
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env (copy .env.example)}
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+  REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+  REFRESH_REUSE_GRACE_SECONDS: ${REFRESH_REUSE_GRACE_SECONDS:-10}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
 
 services:
   postgres:
@@ -57,6 +63,20 @@ services:
       retries: 10
     networks: [backend]
 
+  # One-shot job: brings the schema to the latest revision, then exits. The API and the
+  # worker start only after it succeeds, so they never see an outdated schema.
+  migrate:
+    build:
+      context: ./backend
+      target: runtime
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment: *backend-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+
   backend:
     build:
       context: ./backend
@@ -68,6 +88,8 @@ services:
     ports:
       - "8000:8000"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -104,6 +126,8 @@ services:
     volumes:
       - uploads:/data/uploads
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:

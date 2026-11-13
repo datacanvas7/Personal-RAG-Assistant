@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
+from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging
 from app.db.session import get_engine
 
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
             allow_headers=["Authorization", "Content-Type"],
         )
 
+    register_error_handlers(app)
     app.include_router(api_router, prefix=settings.api_v1_prefix)
     return app
 

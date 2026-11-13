@@ -7,16 +7,51 @@ Routers ask for a service; tests replace the provider with
 from typing import Annotated
 
 from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.db.session import get_engine
+from app.core.errors import AuthenticationError
+from app.db.session import get_engine, get_session
+from app.models import User
+from app.repositories.auth import RefreshTokenRepository, UserRepository
+from app.services.auth import AuthService
 from app.services.health import HealthService
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+# auto_error=False: a missing header is reported through our own error format
+# (and a consistent 401) instead of FastAPI's default 403.
+_bearer = HTTPBearer(auto_error=False, description="Access token from /auth/login")
 
 
 def get_health_service(request: Request, settings: SettingsDep) -> HealthService:
     return HealthService(settings=settings, engine=get_engine(), redis=request.app.state.redis)
 
 
+def get_auth_service(session: SessionDep, settings: SettingsDep) -> AuthService:
+    return AuthService(
+        users=UserRepository(session),
+        tokens=RefreshTokenRepository(session),
+        transaction=session,
+        settings=settings,
+    )
+
+
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
+AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+
+
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    auth: AuthServiceDep,
+) -> User:
+    """Every protected endpoint depends on this. The user id used for data access comes
+    from here (the verified token) and never from the request body or URL."""
+    if credentials is None:
+        raise AuthenticationError()
+    return await auth.authenticate(access_token=credentials.credentials)
+
+
+CurrentUserDep = Annotated[User, Depends(get_current_user)]

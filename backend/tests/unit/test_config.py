@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.core.config import Settings
 from app.workers.tasks import ping
 
@@ -34,3 +37,36 @@ def test_cors_is_disabled_by_default() -> None:
 
 def test_ping_task_returns_pong() -> None:
     assert ping() == "pong"
+
+
+def test_jwt_secret_must_be_long_enough() -> None:
+    with pytest.raises(ValidationError, match="at least 32"):
+        Settings(postgres_password="x", jwt_secret_key="too-short")
+
+
+def test_secrets_are_not_exposed_by_repr() -> None:
+    settings = Settings(postgres_password="x", jwt_secret_key="s" * 40)
+
+    assert "s" * 40 not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"cookie_secure": False},
+        {"jwt_secret_key": "change-me-" + "x" * 30},
+        {"postgres_password": "change-me"},
+    ],
+    ids=["insecure-cookie", "placeholder-jwt-secret", "placeholder-db-password"],
+)
+def test_production_refuses_unsafe_configuration(overrides: dict[str, object]) -> None:
+    safe: dict[str, object] = {
+        "environment": "production",
+        "postgres_password": "a-real-password",
+        "jwt_secret_key": "k" * 40,
+        "cookie_secure": True,
+    }
+
+    Settings(**safe)  # type: ignore[arg-type]  # the safe baseline is accepted
+    with pytest.raises(ValidationError):
+        Settings(**(safe | overrides))  # type: ignore[arg-type]

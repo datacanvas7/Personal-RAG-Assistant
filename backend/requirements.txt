@@ -1,3 +1,5 @@
+alembic==1.20.1
+    # via personal-rag-assistant-backend
 amqp==5.4.2
     # via kombu
 annotated-doc==0.0.6
@@ -9,10 +11,16 @@ anyio==4.16.0
     #   fastapi
     #   starlette
     #   watchfiles
+argon2-cffi==25.1.0
+    # via personal-rag-assistant-backend
+argon2-cffi-bindings==26.2.0
+    # via argon2-cffi
 billiard==4.3.2
     # via celery
 celery==5.7.0
     # via personal-rag-assistant-backend
+cffi==2.1.1
+    # via argon2-cffi-bindings
 click==8.5.1
     # via
     #   celery
@@ -26,6 +34,10 @@ click-plugins==1.1.1.2
     # via celery
 click-repl==0.4.1
     # via celery
+dnspython==2.9.2
+    # via email-validator
+email-validator==2.3.0
+    # via personal-rag-assistant-backend
 fastapi==0.162.5
     # via personal-rag-assistant-backend
 greenlet==3.5.6
@@ -35,19 +47,29 @@ h11==0.16.0
 httptools==0.9.0
     # via uvicorn
 idna==3.20
-    # via anyio
+    # via
+    #   anyio
+    #   email-validator
 kombu==5.7.0
     # via celery
+mako==1.4.3
+    # via alembic
+markupsafe==3.0.4
+    # via mako
 opentelemetry-api==1.45.2
     # via fastapi
 packaging==26.3
     # via kombu
+pgvector==0.5.1
+    # via personal-rag-assistant-backend
 prompt-toolkit==3.0.53
     # via click-repl
 psycopg==3.3.9
     # via personal-rag-assistant-backend
 psycopg-binary==3.3.9 ; implementation_name != 'pypy'
     # via psycopg
+pycparser==3.12 ; implementation_name != 'PyPy'
+    # via cffi
 pydantic==2.14.3
     # via
     #   fastapi
@@ -56,6 +78,8 @@ pydantic==2.14.3
 pydantic-core==2.50.4
     # via pydantic
 pydantic-settings==2.16.3
+    # via personal-rag-assistant-backend
+pyjwt==2.15.1
     # via personal-rag-assistant-backend
 python-dateutil==2.9.0.post0
     # via celery
@@ -72,11 +96,14 @@ redis==8.1.0
 six==1.17.0
     # via python-dateutil
 sqlalchemy==2.1.8
-    # via personal-rag-assistant-backend
+    # via
+    #   alembic
+    #   personal-rag-assistant-backend
 starlette==1.10.0
     # via fastapi
 typing-extensions==4.16.0
     # via
+    #   alembic
     #   anyio
     #   click-repl
     #   fastapi

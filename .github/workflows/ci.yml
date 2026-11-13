@@ -19,6 +19,28 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # Throwaway database for tests/integration. The "_test" suffix is what unlocks those
+    # tests (they drop and recreate the schema).
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg17
+        env:
+          POSTGRES_DB: rag_test
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rag -d rag_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_DB: rag_test
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: ci-only-password
+      JWT_SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10
@@ -28,8 +50,9 @@ jobs:
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run mypy app tests
-      - run: uv run pytest
+      - run: uv run mypy app tests alembic
+      - name: Tests (unit + database integration)
+        run: uv run pytest
       - name: requirements.txt matches uv.lock
         run: uv export --frozen --no-dev --no-hashes --no-emit-project --no-header -o /tmp/requirements.txt && diff -u requirements.txt /tmp/requirements.txt
 
@@ -68,6 +91,21 @@ jobs:
         run: |
           curl --fail --silent --show-error http://localhost:3000/api/v1/health \
             | python3 -c "import sys,json; assert json.load(sys.stdin)['status']=='ok'"
+      - name: Migrations ran and auth works end to end through the frontend proxy
+        run: |
+          set -euo pipefail
+          base=http://localhost:3000/api/v1
+          creds='{"email":"ci@example.com","password":"a-reasonable-passphrase"}'
+          curl -fsS -X POST -H 'Content-Type: application/json' -d "$creds" $base/auth/register
+          echo
+          token=$(curl -fsS -c jar.txt -X POST -H 'Content-Type: application/json' -d "$creds" $base/auth/login             | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+          grep -q refresh_token jar.txt
+          curl -fsS -H "Authorization: Bearer $token" $base/users/me | tee /dev/stderr             | python3 -c "import sys,json; assert json.load(sys.stdin)['email']=='ci@example.com'"
+          echo
+          test "$(curl -s -o /dev/null -w '%{http_code}' $base/users/me)" = 401
+          curl -fsS -b jar.txt -c jar.txt -X POST $base/auth/refresh > /dev/null
+          curl -fsS -b jar.txt -X POST $base/auth/logout
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b jar.txt -X POST $base/auth/refresh)" = 401
       - name: Worker executes a task
         run: |
           docker compose exec -T backend python -c "

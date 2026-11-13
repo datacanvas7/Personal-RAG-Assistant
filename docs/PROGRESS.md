@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 1 — code complete; Docker verification pending** (2026-11-13)
+Current phase: **Phase 2 — code complete; database-backed tests await CI** (2026-11-13)
 
 ---
 
@@ -13,7 +13,7 @@ Current phase: **Phase 1 — code complete; Docker verification pending** (2026-
 
 - [x] Docker location decided: **GitHub Codespaces** (no local Docker / WSL2 needed)
 - [x] Python 3.13 provided by `uv` (no admin needed); host Python 3.10 left untouched
-- [!] Repo is not on GitHub yet — Codespaces and CI need it pushed (see Phase 1)
+- [x] Repo pushed to GitHub (datacanvas7/Personal-RAG-Assistant)
 - [ ] Decide LLM for development: OpenAI key or Ollama
 - [ ] Windows long paths disabled (`git config --global core.longpaths true`)
 
@@ -39,19 +39,28 @@ Current phase: **Phase 1 — code complete; Docker verification pending** (2026-
 - [x] `docker-compose.yml`: postgres+pgvector, redis, backend, worker, frontend; health checks, volumes, networks, startup order
 - [x] Dockerfiles (multi-stage, non-root), `.env.example`, `requirements.txt` exported from `uv.lock`
 - [x] CI workflow: backend, frontend, and Compose smoke test
-- [ ] **Not yet verified (no Docker on this machine):** `docker compose up --build --wait`, pgvector extension present, worker answers `ping`, CI green
-- [ ] Push to GitHub, open a Codespace, run the verification commands in the README
+- [x] Push to GitHub, open a Codespace, `docker compose up --build --wait` — **verified by the user in Codespaces: all services healthy**
 - **Exit:** `docker compose up --build` starts all five services healthy; frontend
   shows backend health; worker executes the ping task.
 
 ## Phase 2 — Database and Authentication
 
-- [ ] SQLAlchemy models for all entities
-- [ ] Alembic configured; initial migration (incl. `CREATE EXTENSION vector`)
-- [ ] Register, login, refresh (rotation), logout, `/auth/me`
-- [ ] Argon2id hashing; JWT validation dependency
-- [ ] Auth tests (happy paths, bad credentials, expired/revoked tokens)
-- **Exit:** migrations apply to an empty DB; auth test suite passes.
+- [x] SQLAlchemy models for all entities (7 tables; composite FKs enforce per-user ownership in SQL)
+- [x] Alembic configured; hand-written `0001` migration incl. `CREATE EXTENSION vector` — renders valid SQL offline (`alembic upgrade head --sql`)
+- [x] Register, login, refresh (rotation + reuse detection), logout, `GET /users/me`
+- [x] Argon2id hashing; HS256 JWT validation dependency; uniform `{"error": {...}}` responses
+- [x] Auth tests against in-memory fakes: 63 unit tests, ruff, mypy strict pass locally
+- [ ] **Not yet verified (no PostgreSQL on this machine):** the 19 database integration tests
+  (migration up/down, migration-vs-models drift, constraints, cascades, vector dimension, auth
+  flow incl. concurrent registration and concurrent refresh) — they run in CI only
+- [ ] Compose `migrate` one-shot service and the auth smoke test in CI
+- **Exit:** migrations apply to an empty DB; auth test suite passes (**both in CI**).
+
+Deferred from the architecture's schema, to be added by the phase that needs it:
+`users.full_name`; `documents.total_pages/total_chunks/embedding_model` and the
+`(user_id, content_hash)` unique index (Phase 3/4); `document_chunks.token_count/metadata`,
+HNSW index (Phase 4); `search_vector` (Phase 9); `user_settings` (Phase 7).
+Rate limiting of login is in Phase 10.
 
 ## Phase 3 — Document Ingestion
 

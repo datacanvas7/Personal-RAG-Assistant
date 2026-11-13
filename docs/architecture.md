@@ -348,6 +348,42 @@ Additions to the brief's schema, each for a stated requirement:
 
 ---
 
+### 7.1 As implemented in Phase 2
+
+- Implemented as above, with these differences: `users` has no `full_name` yet;
+  `documents` stores `content_sha256` (no unique index yet), `status`
+  (`pending|processing|ready|failed`, a `VARCHAR` + `CHECK` rather than a native enum so
+  adding a state is a plain migration) and `error_message`; `message_sources` stores
+  `position`, `score`, `document_filename` and `page_number` but **not** the passage text.
+  Remaining columns arrive with the phase that uses them (see PROGRESS.md).
+- Every table has a UUID primary key (`gen_random_uuid()`), `timestamptz` timestamps and
+  explicitly named constraints (`NAMING_CONVENTION` in `app/db/base.py`).
+- Ownership is enforced by the database: `document_chunks`, `messages` and
+  `message_sources` carry `user_id` and reference their parent through a composite key
+  `(parent_id, user_id)`. A row whose owner differs from its parent's owner cannot exist.
+  `message_sources.chunk_id/document_id` are plain `SET NULL` foreign keys.
+- `users.email` is stored lowercase (`CHECK email = lower(email)` + `UNIQUE`).
+- `document_chunks.embedding` is `vector(384)` (nullable until embedded). The HNSW index
+  is created in Phase 4, when there is data to tune it on.
+
+### 7.2 Authentication design (Phase 2)
+
+| Concern | Design |
+|---|---|
+| Password storage | Argon2id (argon2-cffi defaults, RFC 9106 profile), salt in the hash string; hashing and verification run in a worker thread; length limited to 12-128 characters |
+| Unknown email vs wrong password | Same `401` message; a dummy hash is verified for unknown emails so response times match |
+| Access token | HS256 JWT, 15 min, claims `sub, iat, exp, jti, type=access`; algorithm fixed in code (never read from the token); `exp`, `iat`, `sub` required; secret at least 32 chars |
+| Refresh token | 384-bit random opaque value; only its SHA-256 is stored; `httpOnly`, `SameSite=Strict`, `Secure` (required in production), `Path=/api/v1/auth` |
+| Rotation | Every refresh marks the old row rotated and issues a successor in the same family |
+| Theft detection | A rotated token presented after the 10 s grace window revokes the whole family; inside the window it is refused without revoking (two tabs racing). Row-level `SELECT ... FOR UPDATE` makes simultaneous refreshes deterministic |
+| Logout | Revokes the family; idempotent; clears the cookie |
+| Authorization | `get_current_user` dependency: verified token, then user row, then `is_active`. The `user_id` used by later phases comes only from here |
+| Errors | `{"error": {"code", "message"}}`; `401` carries `WWW-Authenticate: Bearer`; no detail about *why* a token failed |
+| Registration | Case-insensitive duplicate check plus the `UNIQUE` constraint to settle races (`409`). Revealing that an email is registered is an accepted trade-off for a usable sign-up form |
+| Not yet | Login rate limiting / lockout (Phase 10); email verification and password reset (out of scope) |
+
+---
+
 ## 8. Security issues and planned mitigations
 
 | Threat | Mitigation |

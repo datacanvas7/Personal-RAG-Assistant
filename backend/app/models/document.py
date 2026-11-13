@@ -1,0 +1,86 @@
+import enum
+import uuid
+
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import (
+    BigInteger,
+    Enum,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.core.config import get_settings
+from app.db.base import Base, CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
+
+
+class DocumentStatus(enum.StrEnum):
+    PENDING = "pending"  # uploaded, waiting for the worker
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "documents"
+    __table_args__ = (
+        # Lets child tables reference (id, user_id) so the database itself refuses a
+        # child row whose owner differs from its parent's owner.
+        UniqueConstraint("id", "user_id", name="id_user_id"),
+        Index("ix_documents_user_id_created_at", "user_id", "created_at"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(127))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    # Relative to the upload root; never derived from the client's filename.
+    storage_path: Mapped[str] = mapped_column(String(512))
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    status: Mapped[DocumentStatus] = mapped_column(
+        Enum(
+            DocumentStatus,
+            name="status",
+            native_enum=False,
+            create_constraint=True,
+            length=20,
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        default=DocumentStatus.PENDING,
+        server_default=DocumentStatus.PENDING.value,
+    )
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+
+class DocumentChunk(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["document_id", "user_id"],
+            ["documents.id", "documents.user_id"],
+            ondelete="CASCADE",
+            name="fk_document_chunks_document_id_documents",
+        ),
+        UniqueConstraint("document_id", "chunk_index", name="document_id_chunk_index"),
+        UniqueConstraint("id", "user_id", name="id_user_id"),
+        # Every retrieval filters on user_id first.
+        Index("ix_document_chunks_user_id", "user_id"),
+        # The HNSW index on `embedding` is added in the retrieval phase, once there is
+        # real data to choose its parameters for.
+    )
+
+    # Denormalized from the document and enforced equal by the composite foreign key.
+    user_id: Mapped[uuid.UUID] = mapped_column()
+    document_id: Mapped[uuid.UUID] = mapped_column()
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    page_number: Mapped[int | None] = mapped_column(Integer)
+    # NULL until the embedding step has run.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(get_settings().embedding_dimension)
+    )
