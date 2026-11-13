@@ -24,7 +24,7 @@ def _annotate(title: str, details: str) -> None:
     Written to the real stdout: pytest captures ``sys.stdout`` while a test runs, so a plain
     ``print`` from inside a hook would never reach the log.
     """
-    tail = "\n".join(details.strip().splitlines()[-15:])[-1800:]
+    tail = "\n".join(details.strip().splitlines()[-40:])[-4000:]
     tail = tail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
     sys.__stdout__.write(f"\n::error title={title}::{tail}\n")  # type: ignore[union-attr]
     sys.__stdout__.flush()  # type: ignore[union-attr]

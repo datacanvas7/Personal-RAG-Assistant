@@ -31,7 +31,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         # Lets child tables reference (id, user_id) so the database itself refuses a
         # child row whose owner differs from its parent's owner.
-        UniqueConstraint("id", "user_id", name="id_user_id"),
+        UniqueConstraint("id", "user_id", name="uq_documents_id_user_id"),
         Index("ix_documents_user_id_created_at", "user_id", "created_at"),
     )
 
@@ -66,8 +66,10 @@ class DocumentChunk(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
             ondelete="CASCADE",
             name="fk_document_chunks_document_id_documents",
         ),
-        UniqueConstraint("document_id", "chunk_index", name="document_id_chunk_index"),
-        UniqueConstraint("id", "user_id", name="id_user_id"),
+        UniqueConstraint(
+            "document_id", "chunk_index", name="uq_document_chunks_document_id_chunk_index"
+        ),
+        UniqueConstraint("id", "user_id", name="uq_document_chunks_id_user_id"),
         # Every retrieval filters on user_id first.
         Index("ix_document_chunks_user_id", "user_id"),
         # The HNSW index on `embedding` is added in the retrieval phase, once there is

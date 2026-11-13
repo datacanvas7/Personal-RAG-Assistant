@@ -25,7 +25,7 @@ class MessageRole(enum.StrEnum):
 class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "conversations"
     __table_args__ = (
-        UniqueConstraint("id", "user_id", name="id_user_id"),
+        UniqueConstraint("id", "user_id", name="uq_conversations_id_user_id"),
         Index("ix_conversations_user_id_updated_at", "user_id", "updated_at"),
     )
 
@@ -42,7 +42,7 @@ class Message(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
             ondelete="CASCADE",
             name="fk_messages_conversation_id_conversations",
         ),
-        UniqueConstraint("id", "user_id", name="id_user_id"),
+        UniqueConstraint("id", "user_id", name="uq_messages_id_user_id"),
         Index("ix_messages_conversation_id_created_at", "conversation_id", "created_at"),
     )
 
