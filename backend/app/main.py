@@ -10,6 +10,7 @@ from redis.asyncio import Redis
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
+from app.core.limits import MaxBodySizeMiddleware
 from app.core.logging import configure_logging
 from app.db.session import get_engine
 
@@ -48,6 +49,12 @@ def create_app() -> FastAPI:
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
             allow_headers=["Authorization", "Content-Type"],
         )
+
+    app.add_middleware(
+        MaxBodySizeMiddleware,
+        path_suffix="/documents/upload",
+        max_body_bytes=settings.max_upload_bytes,
+    )
 
     register_error_handlers(app)
     app.include_router(api_router, prefix=settings.api_v1_prefix)

@@ -25,6 +25,11 @@ x-backend-environment: &backend-environment
   REFRESH_REUSE_GRACE_SECONDS: ${REFRESH_REUSE_GRACE_SECONDS:-10}
   COOKIE_SECURE: ${COOKIE_SECURE:-false}
   EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
+  # API and worker share this volume: the API writes uploads, the worker reads them.
+  UPLOAD_DIR: /data/uploads
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
+  CHUNK_SIZE_CHARS: ${CHUNK_SIZE_CHARS:-1500}
+  CHUNK_OVERLAP_CHARS: ${CHUNK_OVERLAP_CHARS:-200}
 
 services:
   postgres:

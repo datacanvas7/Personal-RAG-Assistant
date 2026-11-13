@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 2 — complete and verified in CI; awaiting approval to start Phase 3** (2026-11-13)
+Current phase: **Phase 3 — implemented and unit-tested; awaiting CI confirmation** (2026-11-13)
 
 ---
 
@@ -62,24 +62,36 @@ does not exist (fixed by pinning `v10.3.3`; this had broken the Phase 1 CI run t
 models' unique-constraint names disagreed with the migration (fixed; the drift test caught it).
 
 Deferred from the architecture's schema, to be added by the phase that needs it:
-`users.full_name`; `documents.total_pages/total_chunks/embedding_model` and the
-`(user_id, content_hash)` unique index (Phase 3/4); `document_chunks.token_count/metadata`,
+`users.full_name`; `documents.embedding_model` (Phase 4; `total_pages/total_chunks` and the
+`(user_id, content_sha256)` unique index arrived in Phase 3); `document_chunks.token_count/metadata`,
 HNSW index (Phase 4); `search_vector` (Phase 9); `user_settings` (Phase 7).
 Rate limiting of login is in Phase 10.
 
 ## Phase 3 — Document Ingestion
 
-- [ ] Upload endpoint with validation (extension, magic bytes, size, empty)
-- [ ] Storage backend (local volume)
-- [ ] Loaders: PDF, TXT, Markdown, DOCX
-- [ ] Scanned-PDF detection ("OCR required")
-- [ ] Text cleaning
-- [ ] Page-aware chunking (configurable size/overlap)
-- [ ] Celery ingestion task: status transitions, retries, idempotency, atomic write
-- [ ] Document list / detail / status / delete endpoints
-- [ ] Tests: upload, each loader, cleaning, chunking, failure paths
+Status: **implemented; 172 unit tests, ruff and mypy strict pass locally. The database
+integration tests for this phase run only in CI and are not yet confirmed (see "Pending CI").**
+
+- [x] Upload endpoint with validation (extension allow-list, magic bytes, empty, size, filename sanitising); `Content-Length` pre-check middleware
+- [x] Storage backend (local volume, generated names, atomic write, path-escape guard) behind a `FileStorage` interface
+- [x] Loaders: PDF (PyMuPDF), TXT, Markdown, DOCX (python-docx, tables in order), with limits on pages, unpacked size and extracted text
+- [x] Scanned-PDF detection ("OCR required"); password-protected and corrupt PDFs fail with a readable message
+- [x] Text cleaning (NFC, newlines, control/invisible characters, line-break hyphens, spacing)
+- [x] Page-aware chunking (configurable size/overlap; chunks never cross pages)
+- [x] Celery ingestion task: claim → process → atomic replace; retries on database errors with backoff; idempotent; late acknowledgement
+- [x] Document upload / list / detail / status / retry / delete endpoints (foreign ids return 404)
+- [x] Migration `0002`: `total_pages`, `total_chunks`, unique `(user_id, content_sha256)`
+- [x] Unit tests: validation, cleaning, chunking, each loader, storage, pipeline success / failure / repeat / deleted-meanwhile, API incl. isolation, duplicates, broker outage
+- [ ] **Pending CI:** integration tests (`tests/integration/test_documents_flow.py`) against real PostgreSQL: each file type end to end with page numbers, repeat and redelivery leave no duplicates, a failed write keeps the previous chunks, delete cascades, isolation, migration `0002` up/down
+- [ ] **Pending CI:** Compose smoke test still healthy with the shared `uploads` volume
 - **Exit:** uploading each file type yields correct chunks with page numbers; a
-  failed or repeated job leaves no partial or duplicate chunks.
+  failed or repeated job leaves no partial or duplicate chunks. *Met by the unit tests with
+  fakes; confirmation against the real database is pending CI.*
+
+Deviations from the plan: PyMuPDF is pinned to 1.28 (2.x pulls in onnxruntime and numpy);
+chunk size and overlap are measured in characters, not tokens (no tokenizer is needed until
+Phase 4); `total_pages` stays NULL for formats without pages. Not covered here: the Next.js
+proxy's request-body limit and any edge/proxy body limit (Phase 7 and Phase 10).
 
 ## Phase 4 — Embeddings and Vector Database
 

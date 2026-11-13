@@ -52,6 +52,8 @@ idna==3.20
     #   email-validator
 kombu==5.7.0
     # via celery
+lxml==6.1.3
+    # via python-docx
 mako==1.4.3
     # via alembic
 markupsafe==3.0.4
@@ -81,12 +83,18 @@ pydantic-settings==2.16.3
     # via personal-rag-assistant-backend
 pyjwt==2.15.1
     # via personal-rag-assistant-backend
+pymupdf==1.28.2
+    # via personal-rag-assistant-backend
 python-dateutil==2.9.0.post0
     # via celery
+python-docx==1.2.0
+    # via personal-rag-assistant-backend
 python-dotenv==1.2.4
     # via
     #   pydantic-settings
     #   uvicorn
+python-multipart==0.0.33
+    # via personal-rag-assistant-backend
 pyyaml==6.0.3
     # via uvicorn
 redis==8.1.0
@@ -111,6 +119,7 @@ typing-extensions==4.16.0
     #   pydantic
     #   pydantic-core
     #   pydantic-settings
+    #   python-docx
     #   sqlalchemy
     #   typing-inspection
 typing-inspection==0.4.5

@@ -34,6 +34,29 @@ class ConflictError(AppError):
     code = "conflict"
 
 
+class NotFoundError(AppError):
+    """Also used for resources that exist but belong to someone else: the API never
+    reveals which ids are taken by other users."""
+
+    status_code = 404
+    code = "not_found"
+
+
+class InvalidFileError(AppError):
+    status_code = 400
+    code = "invalid_file"
+
+
+class UnsupportedFileTypeError(AppError):
+    status_code = 415
+    code = "unsupported_file_type"
+
+
+class FileTooLargeError(AppError):
+    status_code = 413
+    code = "file_too_large"
+
+
 async def _handle_app_error(_request: Request, exc: Exception) -> JSONResponse:
     app_error = cast(AppError, exc)  # registered for AppError only
     return JSONResponse(

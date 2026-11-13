@@ -3,8 +3,9 @@
 Upload your own documents (PDF, TXT, Markdown, DOCX) and ask questions about them. Answers are
 generated from retrieved passages of *your* documents only and come with citations.
 
-> **Status: Phase 2 of 11 — database and authentication.** Accounts, login and protected
-> endpoints exist; there is no UI or document feature yet. See [docs/PROGRESS.md](docs/PROGRESS.md) for what works and
+> **Status: Phase 3 of 11 — document ingestion.** Accounts, login, and uploading documents
+> that are parsed and split into page-aware chunks exist; there is no search, chat or UI yet.
+> See [docs/PROGRESS.md](docs/PROGRESS.md) for what works and
 > [docs/architecture.md](docs/architecture.md) for the design. This README grows with the project.
 
 ## Run it
@@ -35,6 +36,14 @@ curl -s -X POST localhost:8000/api/v1/auth/register -H 'Content-Type: applicatio
 curl -s -X POST localhost:8000/api/v1/auth/login -H 'Content-Type: application/json' \
   -d '{"email":"me@example.com","password":"a-long-passphrase"}'   # returns access_token
 curl -s localhost:8000/api/v1/users/me -H "Authorization: Bearer <access_token>"
+```
+
+Upload a document (PDF, DOCX, TXT or Markdown, up to 25 MiB) and watch it being processed:
+
+```bash
+curl -s -X POST localhost:8000/api/v1/documents/upload -H "Authorization: Bearer <access_token>" \
+  -F "file=@report.pdf"                                   # 202, status "pending"
+curl -s localhost:8000/api/v1/documents/<id>/status -H "Authorization: Bearer <access_token>"
 ```
 
 Check the worker executes tasks:

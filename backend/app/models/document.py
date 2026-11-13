@@ -32,6 +32,9 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         # Lets child tables reference (id, user_id) so the database itself refuses a
         # child row whose owner differs from its parent's owner.
         UniqueConstraint("id", "user_id", name="uq_documents_id_user_id"),
+        # The same file cannot be uploaded twice by one user (it would double its weight
+        # in retrieval). Two users may of course upload the same file.
+        UniqueConstraint("user_id", "content_sha256", name="uq_documents_user_id_content_sha256"),
         Index("ix_documents_user_id_created_at", "user_id", "created_at"),
     )
 
@@ -55,6 +58,10 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         server_default=DocumentStatus.PENDING.value,
     )
     error_message: Mapped[str | None] = mapped_column(Text)
+    # Filled in by the ingestion worker; NULL until the document has been processed.
+    # total_pages stays NULL for formats without pages (TXT, Markdown, DOCX).
+    total_pages: Mapped[int | None] = mapped_column(Integer)
+    total_chunks: Mapped[int | None] = mapped_column(Integer)
 
 
 class DocumentChunk(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):

@@ -3,12 +3,14 @@
 from collections.abc import AsyncIterator
 from functools import lru_cache
 
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
 
@@ -32,3 +34,18 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     request without committing rolls back."""
     async with get_sessionmaker()() as session:
         yield session
+
+
+# --- Synchronous access, for the Celery worker -------------------------------------------
+# Celery tasks are plain functions run in worker processes, not coroutines, so they use a
+# synchronous engine (the same psycopg driver). It is created lazily, inside the worker
+# process, after Celery has forked.
+
+
+@lru_cache
+def get_sync_engine() -> Engine:
+    return create_engine(get_settings().database_url, pool_pre_ping=True)
+
+
+def get_sync_sessionmaker() -> sessionmaker[Session]:
+    return sessionmaker(get_sync_engine(), expire_on_commit=False)

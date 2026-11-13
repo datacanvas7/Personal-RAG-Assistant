@@ -382,6 +382,54 @@ Additions to the brief's schema, each for a stated requirement:
 | Registration | Case-insensitive duplicate check plus the `UNIQUE` constraint to settle races (`409`). Revealing that an email is registered is an accepted trade-off for a usable sign-up form |
 | Not yet | Login rate limiting / lockout (Phase 10); email verification and password reset (out of scope) |
 
+### 7.3 Document ingestion as implemented (Phase 3)
+
+**Endpoints** (all require a bearer token; `user_id` always comes from the token):
+
+| Method and path | Behavior |
+|---|---|
+| `POST /documents/upload` | multipart `file`; validates, stores, queues; `202` with the document (`pending`) |
+| `GET /documents` | `limit` (1-100, default 20), `offset`; newest first; `{items, total, limit, offset}` |
+| `GET /documents/{id}` and `/status` | full record / small polling payload; another user's id gives `404` |
+| `POST /documents/{id}/retry` | `failed` only → `pending` and queued again (`409` otherwise) |
+| `DELETE /documents/{id}` | row (chunks cascade), then the file; `204` |
+
+**Validation order:** extension allow-list (`.pdf .txt .md .docx`) → non-empty → size
+(`MAX_UPLOAD_BYTES`, default 25 MiB; a middleware also rejects an oversized `Content-Length`
+before the body is read) → content check against the extension (`%PDF-` in the first KiB; ZIP
+containing `word/document.xml`; no NUL bytes and valid UTF-8 for text). The content type is
+derived from the extension, never taken from the client. The client's file name is sanitised
+and shown only; the stored name is `<user_id>/<document_id><ext>`.
+
+**Duplicates:** `UNIQUE (user_id, content_sha256)`. A fast pre-check gives a clean `409`; the
+constraint settles races. Two users may upload the same file.
+
+**Job (`documents.ingest`):** `claim` (conditional `UPDATE ... RETURNING` from
+`pending|failed|processing` to `processing`; `ready` or deleted is skipped) → load → clean →
+chunk → `replace_chunks` (lock the document row, delete old chunks, bulk insert, set `ready`,
+`total_pages`, `total_chunks`, one transaction). So a crash, retry or duplicate delivery can
+neither duplicate nor half-write chunks. Problems with the file end as `failed` with a
+user-facing message (no retry can fix them); a database outage is retried with exponential
+backoff (3 times); an unexpected exception is logged and shown generically. If the broker is
+down at upload time the document is marked `failed` ("use retry") instead of staying
+`pending` forever.
+
+**Loaders and limits:** PDF via PyMuPDF (page numbers from 1; rejects password-protected,
+corrupt, over `MAX_PDF_PAGES`, and PDFs where at least half the pages have fewer than
+`OCR_MIN_CHARS_PER_PAGE` characters of text, as "OCR required"); DOCX via python-docx
+(paragraphs and tables in document order; rejects archives that unpack beyond 200 MB); TXT and
+Markdown as UTF-8 (BOM tolerated). All formats are capped at `MAX_EXTRACTED_CHARS`.
+
+**Chunking:** by characters (`CHUNK_SIZE_CHARS` 1500, `CHUNK_OVERLAP_CHARS` 200; overlap at
+most half the size). A chunk never spans pages, so its page number is exact. Splits prefer
+paragraph, then sentence, then word boundaries; a single word longer than the size is cut.
+Overlap is seeded at a word boundary within the same page. Formats without pages store
+`page_number = NULL`.
+
+**Operations:** API and worker share the `uploads` volume mounted at `/data/uploads`
+(`UPLOAD_DIR`). The worker uses a synchronous SQLAlchemy engine created lazily after the
+fork; the API uses the async engine.
+
 ---
 
 ## 8. Security issues and planned mitigations

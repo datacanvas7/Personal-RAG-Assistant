@@ -6,6 +6,7 @@ silently running with a guessable value.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import Field, SecretStr, model_validator
@@ -64,6 +65,29 @@ class Settings(BaseSettings):
     # --- Embeddings -------------------------------------------------------------------
     # Fixed in the database column type; changing it needs a migration and a re-index.
     embedding_dimension: int = Field(default=384, ge=1, le=2000)
+
+    # --- Documents --------------------------------------------------------------------
+    # Where uploaded files live. In Docker this is a volume shared by the API and the
+    # worker, because the API writes the file and the worker reads it.
+    upload_dir: Path = Path("data/uploads")
+    max_upload_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
+    # Limits that bound the work one hostile file can cause (see ingestion/loaders.py).
+    max_pdf_pages: int = Field(default=1000, ge=1)
+    max_extracted_chars: int = Field(default=5_000_000, ge=1)
+    # A PDF page with fewer extracted characters than this counts as "image only"; if at
+    # least half of the pages are image-only the document is rejected as needing OCR.
+    ocr_min_chars_per_page: int = Field(default=20, ge=0)
+    # Chunk size in characters, not tokens: this avoids shipping a tokenizer, and 1500
+    # characters (about 350 English tokens) fits the 512-token window of small embedding
+    # models with room to spare.
+    chunk_size_chars: int = Field(default=1500, ge=200)
+    chunk_overlap_chars: int = Field(default=200, ge=0)
+
+    @model_validator(mode="after")
+    def _check_chunking(self) -> Self:
+        if self.chunk_overlap_chars * 2 > self.chunk_size_chars:
+            raise ValueError("CHUNK_OVERLAP_CHARS must be at most half of CHUNK_SIZE_CHARS")
+        return self
 
     @model_validator(mode="after")
     def _check_secrets(self) -> Self:

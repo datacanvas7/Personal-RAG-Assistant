@@ -15,8 +15,12 @@ from app.core.errors import AuthenticationError
 from app.db.session import get_engine, get_session
 from app.models import User
 from app.repositories.auth import RefreshTokenRepository, UserRepository
+from app.repositories.documents import DocumentRepository
 from app.services.auth import AuthService
+from app.services.documents import DocumentService
 from app.services.health import HealthService
+from app.services.queue import CeleryIngestionQueue, IngestionQueue
+from app.services.storage import FileStorage, LocalFileStorage
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -39,8 +43,36 @@ def get_auth_service(session: SessionDep, settings: SettingsDep) -> AuthService:
     )
 
 
+def get_file_storage(settings: SettingsDep) -> FileStorage:
+    return LocalFileStorage(settings.upload_dir)
+
+
+def get_ingestion_queue() -> IngestionQueue:
+    return CeleryIngestionQueue()
+
+
+FileStorageDep = Annotated[FileStorage, Depends(get_file_storage)]
+IngestionQueueDep = Annotated[IngestionQueue, Depends(get_ingestion_queue)]
+
+
+def get_document_service(
+    session: SessionDep,
+    settings: SettingsDep,
+    storage: FileStorageDep,
+    queue: IngestionQueueDep,
+) -> DocumentService:
+    return DocumentService(
+        documents=DocumentRepository(session),
+        storage=storage,
+        queue=queue,
+        transaction=session,
+        settings=settings,
+    )
+
+
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
 
 
 async def get_current_user(
