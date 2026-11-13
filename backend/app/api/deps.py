@@ -13,9 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.errors import AuthenticationError
 from app.db.session import get_engine, get_session
+from app.embeddings.base import EmbeddingProvider
+from app.embeddings.factory import get_embedding_provider
 from app.models import User
 from app.repositories.auth import RefreshTokenRepository, UserRepository
 from app.repositories.documents import DocumentRepository
+from app.retrieval.service import SearchService
+from app.retrieval.vector_store import PgVectorStore
 from app.services.auth import AuthService
 from app.services.documents import DocumentService
 from app.services.health import HealthService
@@ -70,9 +74,25 @@ def get_document_service(
     )
 
 
+def get_embedder() -> EmbeddingProvider:
+    return get_embedding_provider()
+
+
+EmbedderDep = Annotated[EmbeddingProvider, Depends(get_embedder)]
+
+
+def get_search_service(session: SessionDep, embedder: EmbedderDep) -> SearchService:
+    return SearchService(
+        embedder=embedder,
+        vectors=PgVectorStore(session),
+        documents=DocumentRepository(session),
+    )
+
+
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
+SearchServiceDep = Annotated[SearchService, Depends(get_search_service)]
 
 
 async def get_current_user(

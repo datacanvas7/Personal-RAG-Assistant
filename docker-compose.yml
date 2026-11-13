@@ -25,11 +25,24 @@ x-backend-environment: &backend-environment
   REFRESH_REUSE_GRACE_SECONDS: ${REFRESH_REUSE_GRACE_SECONDS:-10}
   COOKIE_SECURE: ${COOKIE_SECURE:-false}
   EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-sentence_transformers}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+  # `-` (not `:-`): an explicitly empty value in .env switches the prefix off.
+  EMBEDDING_QUERY_PREFIX: "${EMBEDDING_QUERY_PREFIX-Represent this sentence for searching relevant passages: }"
+  EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
+  EMBEDDING_TIMEOUT_SECONDS: ${EMBEDDING_TIMEOUT_SECONDS:-30}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   # API and worker share this volume: the API writes uploads, the worker reads them.
   UPLOAD_DIR: /data/uploads
   MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
   CHUNK_SIZE_CHARS: ${CHUNK_SIZE_CHARS:-1500}
   CHUNK_OVERLAP_CHARS: ${CHUNK_OVERLAP_CHARS:-200}
+
+x-backend-build: &backend-build
+  context: ./backend
+  target: runtime
+  args:
+    INSTALL_LOCAL_EMBEDDINGS: ${INSTALL_LOCAL_EMBEDDINGS:-true}
 
 services:
   postgres:
@@ -71,9 +84,7 @@ services:
   # One-shot job: brings the schema to the latest revision, then exits. The API and the
   # worker start only after it succeeds, so they never see an outdated schema.
   migrate:
-    build:
-      context: ./backend
-      target: runtime
+    build: *backend-build
     restart: "no"
     command: ["alembic", "upgrade", "head"]
     environment: *backend-environment
@@ -83,13 +94,12 @@ services:
     networks: [backend]
 
   backend:
-    build:
-      context: ./backend
-      target: runtime
+    build: *backend-build
     restart: unless-stopped
     environment: *backend-environment
     volumes:
       - uploads:/data/uploads
+      - models:/data/models
     ports:
       - "8000:8000"
     depends_on:
@@ -113,9 +123,7 @@ services:
     networks: [backend, frontend]
 
   worker:
-    build:
-      context: ./backend
-      target: runtime
+    build: *backend-build
     restart: unless-stopped
     # Same image as the API, different process. The explicit node name lets the health
     # check address this worker.
@@ -130,6 +138,7 @@ services:
     environment: *backend-environment
     volumes:
       - uploads:/data/uploads
+      - models:/data/models
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -172,6 +181,8 @@ volumes:
   postgres_data:
   redis_data:
   uploads:
+  # Downloaded embedding model (Hugging Face cache), shared by the API and the worker.
+  models:
 
 networks:
   # Data services live only on `backend`; the frontend cannot reach them directly.

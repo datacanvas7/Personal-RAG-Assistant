@@ -6,6 +6,8 @@ from sqlalchemy.exc import OperationalError
 
 from app.core.config import get_settings
 from app.db.session import get_sync_sessionmaker
+from app.embeddings.base import EmbeddingUnavailableError
+from app.embeddings.factory import get_embedding_provider
 from app.ingestion.pipeline import run_ingestion
 from app.repositories.documents import SqlIngestionStore
 from app.services.queue import INGEST_TASK_NAME
@@ -26,11 +28,12 @@ def ping() -> str:
 
 @celery_app.task(name=INGEST_TASK_NAME, bind=True, max_retries=_MAX_RETRIES)
 def ingest_document(self: Any, document_id: str) -> str:
-    """Extract, chunk and store one document.
+    """Extract, chunk, embed and store one document.
 
     Problems with the file end the job as ``failed`` inside ``run_ingestion``. A database
-    outage is retried with exponential backoff; the job is idempotent, so a retry (or a
-    redelivery after a worker crash, since tasks are acknowledged late) is harmless.
+    outage or an unreachable embedding service is retried with exponential backoff; the job
+    is idempotent, so a retry (or a redelivery after a worker crash, since tasks are
+    acknowledged late) is harmless.
     """
     settings = get_settings()
     parsed_id = uuid.UUID(document_id)
@@ -41,9 +44,10 @@ def ingest_document(self: Any, document_id: str) -> str:
                 parsed_id,
                 store=store,
                 storage=LocalFileStorage(settings.upload_dir),
+                embedder=get_embedding_provider(),
                 settings=settings,
             )
-        except OperationalError as error:
+        except (OperationalError, EmbeddingUnavailableError) as error:
             if self.request.retries >= _MAX_RETRIES:
                 logger.exception("giving up on document %s", document_id)
                 store.mark_failed(

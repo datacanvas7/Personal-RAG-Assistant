@@ -57,6 +57,14 @@ class FileTooLargeError(AppError):
     code = "file_too_large"
 
 
+class ServiceUnavailableError(AppError):
+    """A dependency this request needs (e.g. the embedding model) is not working. The
+    message never names the dependency or its error; those go to the log."""
+
+    status_code = 503
+    code = "service_unavailable"
+
+
 async def _handle_app_error(_request: Request, exc: Exception) -> JSONResponse:
     app_error = cast(AppError, exc)  # registered for AppError only
     return JSONResponse(

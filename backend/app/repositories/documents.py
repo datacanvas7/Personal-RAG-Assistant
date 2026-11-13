@@ -61,6 +61,16 @@ class DocumentRepository:
         )
         return result.scalar_one()
 
+    async def filenames(
+        self, user_id: uuid.UUID, document_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        result = await self._session.execute(
+            select(Document.id, Document.filename).where(
+                Document.user_id == user_id, Document.id.in_(document_ids)
+            )
+        )
+        return {row.id: row.filename for row in result.all()}
+
     async def delete(self, document: Document) -> None:
         # Chunks go with it through ON DELETE CASCADE.
         await self._session.delete(document)
@@ -106,9 +116,15 @@ class SqlIngestionStore:
         return ClaimedDocument(row.id, row.user_id, row.storage_path, extension)
 
     def replace_chunks(
-        self, document_id: uuid.UUID, chunks: Sequence[Chunk], *, total_pages: int | None
+        self,
+        document_id: uuid.UUID,
+        chunks: Sequence[Chunk],
+        embeddings: Sequence[Sequence[float]],
+        *,
+        embedding_model: str,
+        total_pages: int | None,
     ) -> bool:
-        """Atomically swap in a document's chunks and mark it ``ready``.
+        """Atomically swap in a document's chunks and vectors and mark it ``ready``.
 
         Old chunks are deleted and new ones inserted in one transaction while the document
         row is locked, so a crash, a retry or two racing workers can never leave a partial
@@ -131,14 +147,16 @@ class SqlIngestionStore:
                     "chunk_index": chunk.index,
                     "content": chunk.content,
                     "page_number": chunk.page_number,
+                    "embedding": list(embedding),
                 }
-                for chunk in chunks
+                for chunk, embedding in zip(chunks, embeddings, strict=True)
             ],
         )
         document.status = DocumentStatus.READY
         document.error_message = None
         document.total_pages = total_pages
         document.total_chunks = len(chunks)
+        document.embedding_model = embedding_model
         self._session.commit()
         return True
 

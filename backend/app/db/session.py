@@ -44,7 +44,10 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 @lru_cache
 def get_sync_engine() -> Engine:
-    return create_engine(get_settings().database_url, pool_pre_ping=True)
+    # connect_timeout: a startup check must fail fast, not hang, when the database is down.
+    return create_engine(
+        get_settings().database_url, pool_pre_ping=True, connect_args={"connect_timeout": 10}
+    )
 
 
 def get_sync_sessionmaker() -> sessionmaker[Session]:

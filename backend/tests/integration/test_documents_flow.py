@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
-from app.api.deps import get_file_storage, get_ingestion_queue
+from app.api.deps import get_embedder, get_file_storage, get_ingestion_queue
 from app.core.config import Settings, get_settings
 from app.db.session import get_session
 from app.ingestion.chunking import Chunk
@@ -29,12 +29,18 @@ from app.ingestion.pipeline import IngestionOutcome, run_ingestion
 from app.main import create_app
 from app.repositories.documents import SqlIngestionStore
 from app.services.storage import LocalFileStorage
+from tests.fakes import FakeEmbedder
 from tests.integration.conftest import alembic_config, reset_schema
 from tests.samples import long_text, make_docx, make_pdf
 
 PASSWORD = "a-reasonable-passphrase"
 BASE = "/api/v1/documents"
 SETTINGS = Settings(chunk_size_chars=400, chunk_overlap_chars=60)
+MODEL = FakeEmbedder().model_id
+
+
+def _vectors(count: int) -> list[list[float]]:
+    return [[1.0] + [0.0] * 383 for _ in range(count)]
 
 
 class InlineQueue:
@@ -56,6 +62,7 @@ class InlineQueue:
                 document_id,
                 store=SqlIngestionStore(session),
                 storage=self._storage,
+                embedder=FakeEmbedder(),
                 settings=SETTINGS,
             )
 
@@ -84,6 +91,7 @@ async def stack(migrated_engine: Engine, tmp_path: Path) -> AsyncIterator[Stack]
     app.dependency_overrides[get_session] = session_override
     app.dependency_overrides[get_file_storage] = lambda: storage
     app.dependency_overrides[get_ingestion_queue] = lambda: queue
+    app.dependency_overrides[get_embedder] = FakeEmbedder  # same model as the inline worker
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
         yield Stack(client, migrated_engine, storage, queue, tmp_path)
@@ -250,12 +258,16 @@ def test_a_write_that_fails_midway_keeps_the_previous_chunks(migrated_engine: En
         )
     good = [Chunk(0, None, "first"), Chunk(1, None, "second")]
     with Session(migrated_engine) as session:
-        assert SqlIngestionStore(session).replace_chunks(document_id, good, total_pages=None)
+        assert SqlIngestionStore(session).replace_chunks(
+            document_id, good, _vectors(2), embedding_model=MODEL, total_pages=None
+        )
 
     # The second chunk is rejected by PostgreSQL (NUL is not allowed in text).
     bad = [Chunk(0, None, "fine"), Chunk(1, None, "bro\x00ken")]
     with Session(migrated_engine) as session, pytest.raises((DBAPIError, ValueError)):
-        SqlIngestionStore(session).replace_chunks(document_id, bad, total_pages=None)
+        SqlIngestionStore(session).replace_chunks(
+            document_id, bad, _vectors(2), embedding_model=MODEL, total_pages=None
+        )
 
     with migrated_engine.connect() as conn:
         contents = (
@@ -278,7 +290,11 @@ def test_a_document_deleted_during_ingestion_is_reported_not_resurrected(
     with Session(migrated_engine) as session:
         assert (
             SqlIngestionStore(session).replace_chunks(
-                uuid.uuid4(), [Chunk(0, None, "x")], total_pages=None
+                uuid.uuid4(),
+                [Chunk(0, None, "x")],
+                _vectors(1),
+                embedding_model=MODEL,
+                total_pages=None,
             )
             is False
         )

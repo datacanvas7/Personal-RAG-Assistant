@@ -66,6 +66,10 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # total_pages stays NULL for formats without pages (TXT, Markdown, DOCX).
     total_pages: Mapped[int | None] = mapped_column(Integer)
     total_chunks: Mapped[int | None] = mapped_column(Integer)
+    # Which embedding model produced this document's vectors (EmbeddingProvider.model_id).
+    # Vectors from different models are not comparable, so the application refuses to run
+    # against an index that mixes them. NULL until the document has been embedded.
+    embedding_model: Mapped[str | None] = mapped_column(String(200))
 
 
 class DocumentChunk(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
@@ -83,8 +87,16 @@ class DocumentChunk(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         UniqueConstraint("id", "user_id", name="uq_document_chunks_id_user_id"),
         # Every retrieval filters on user_id first.
         Index("ix_document_chunks_user_id", "user_id"),
-        # The HNSW index on `embedding` is added in the retrieval phase, once there is
-        # real data to choose its parameters for.
+        # Approximate nearest-neighbour search by cosine distance. m and ef_construction are
+        # pgvector's defaults, which suit a collection of this size; revisit with the
+        # Phase 9 evaluation if recall ever looks low.
+        Index(
+            "ix_document_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_with={"m": 16, "ef_construction": 64},
+        ),
     )
 
     # Denormalized from the document and enforced equal by the composite foreign key.

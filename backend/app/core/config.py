@@ -65,6 +65,15 @@ class Settings(BaseSettings):
     # --- Embeddings -------------------------------------------------------------------
     # Fixed in the database column type; changing it needs a migration and a re-index.
     embedding_dimension: int = Field(default=384, ge=1, le=2000)
+    embedding_provider: Literal["sentence_transformers", "openai"] = "sentence_transformers"
+    # Unset means the provider's default (see ``resolved_embedding_model``).
+    embedding_model: str | None = None
+    # BGE retrieves better when the search query starts with this instruction. Documents
+    # are embedded as they are. Empty it when using a model that does not want one.
+    embedding_query_prefix: str = "Represent this sentence for searching relevant passages: "
+    embedding_batch_size: int = Field(default=32, ge=1, le=256)
+    openai_api_key: SecretStr | None = None
+    embedding_timeout_seconds: float = Field(default=30.0, gt=0)
 
     # --- Documents --------------------------------------------------------------------
     # Where uploaded files live. In Docker this is a volume shared by the API and the
@@ -87,6 +96,14 @@ class Settings(BaseSettings):
     def _check_chunking(self) -> Self:
         if self.chunk_overlap_chars * 2 > self.chunk_size_chars:
             raise ValueError("CHUNK_OVERLAP_CHARS must be at most half of CHUNK_SIZE_CHARS")
+        return self
+
+    @model_validator(mode="after")
+    def _check_embeddings(self) -> Self:
+        if self.embedding_provider == "openai" and not (
+            self.openai_api_key and self.openai_api_key.get_secret_value()
+        ):
+            raise ValueError("OPENAI_API_KEY is required when EMBEDDING_PROVIDER=openai")
         return self
 
     @model_validator(mode="after")
@@ -120,6 +137,14 @@ class Settings(BaseSettings):
             port=self.postgres_port,
             database=self.postgres_db,
         )
+
+    @property
+    def resolved_embedding_model(self) -> str:
+        if self.embedding_model:
+            return self.embedding_model
+        if self.embedding_provider == "openai":
+            return "text-embedding-3-small"
+        return "BAAI/bge-small-en-v1.5"
 
     @property
     def cors_origins(self) -> list[str]:

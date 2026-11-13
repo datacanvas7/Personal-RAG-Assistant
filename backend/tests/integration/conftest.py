@@ -5,6 +5,8 @@ refuse to run unless ``POSTGRES_DB`` ends with ``_test``. CI provides such a dat
 locally they are skipped, which keeps a developer's real data safe.
 """
 
+import asyncio
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -16,6 +18,11 @@ from sqlalchemy import Engine, create_engine, text
 from app.core.config import get_settings
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+if sys.platform == "win32":
+    # psycopg's async mode cannot run on Windows' default (Proactor) event loop. Only
+    # matters when running these tests on a Windows machine; CI and Docker use Linux.
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 @pytest.fixture(autouse=True)

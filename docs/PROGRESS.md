@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 3 — complete and verified in CI; awaiting approval to start Phase 4** (2026-11-13)
+Current phase: **Phase 4 — implemented; local checks pass, CI not yet run** (2026-11-14)
 
 ---
 
@@ -98,17 +98,33 @@ proxy's request-body limit and any edge/proxy body limit (Phase 7 and Phase 10).
 
 ## Phase 4 — Embeddings and Vector Database
 
-- [ ] `EmbeddingProvider` interface
-- [ ] SentenceTransformers (BGE-small) provider
-- [ ] OpenAI embeddings provider
-- [ ] Dimension/model startup guard
-- [ ] Embedding step added to ingestion
-- [ ] pgvector similarity search with user and document filters
-- [ ] HNSW index
-- [ ] `/search` endpoint
-- [ ] Tests: providers (mocked for OpenAI), retrieval, **user isolation**
+Status: **implemented; verified locally, not yet in CI (2026-11-14).** 219 unit tests, ruff and
+mypy strict pass; the 45 database integration tests pass against a local PostgreSQL with
+pgvector 0.6.2; the real BGE model was run (relevant passage scores 0.82 against 0.27 / 0.25
+for unrelated ones, unit-length vectors). Items marked `[~]` can only be verified in CI
+(they need pgvector 0.8 or Docker).
+
+- [x] `EmbeddingProvider` interface (`app/embeddings/base.py`): `model_id`, `dimension`, `embed_documents`, `embed_query`; `EmbeddingUnavailableError` (retried) vs `EmbeddingError` (permanent)
+- [x] SentenceTransformers (BGE-small) provider: lazy load, normalised vectors, instruction prefix on queries only; optional extra `local-embeddings`, CPU-only PyTorch on Linux
+- [x] OpenAI embeddings provider: batching, `dimensions` for `text-embedding-3-*`, transient vs permanent errors — tested with a mocked client, **not run against the real API**
+- [x] Dimension/model startup guard (`app/embeddings/guard.py`): refuses to start on a column-dimension mismatch or ready documents embedded by another model; warns about ready documents without vectors
+- [x] Embedding step added to ingestion: embedded before the transaction; vectors and `embedding_model` written by the same atomic `replace_chunks`
+- [x] pgvector cosine search with user and optional document filters (`app/retrieval/`); `user_id` only from the token
+- [x] HNSW index (`vector_cosine_ops`, m=16, ef_construction=64), migration `0003`
+- [x] `POST /search` (`query`, `top_k` 1–50, optional `document_ids`)
+- [x] `python -m app.scripts.reindex`: resets ready documents embedded by another model, erases their vectors and re-queues them
+- [x] Tests: providers (OpenAI mocked), config, guard, pipeline embedding paths, search API (validation, auth, isolation, 503), real-database search / ranking / index / guard / reindex / migration, real BGE model (skipped unless the extra is installed)
+- [~] `hnsw.iterative_scan` keeps filtered search complete when other users dominate the index — its test skips below pgvector 0.8; **runs in CI**
+- [~] Compose: image builds with the local model, `models` volume, end-to-end step (upload → ready → search → second user gets nothing) — **CI only (no Docker on the dev machine)**
 - **Exit:** a query returns the expected chunks for the owning user and nothing for
-  another user.
+  another user — met by the isolation tests (unit and real database); CI confirmation pending.
+
+Deviations from the plan: `VectorStore` is the read side only — vectors are written by the
+ingestion transaction so a document is never half-indexed. LangChain is not used for
+embeddings (the adapters are small and fully typed). The startup guard runs in the API only; a
+worker started with a different model than the API is not detected (both read the same `.env`).
+There is no minimum-score cut-off yet (Phase 5 tunes it with real questions). `/search` has no
+rate limit until Phase 10.
 
 ## Phase 5 — RAG Engine
 

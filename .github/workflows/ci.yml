@@ -112,6 +112,53 @@ jobs:
           from app.workers.tasks import ping
           assert ping.delay().get(timeout=20) == 'pong'
           print('celery ping ok')"
+      - name: Upload, embed and search end to end (real model, per-user isolation)
+        run: |
+          set -euo pipefail
+          base=http://localhost:8000/api/v1
+          json() { python3 -c "import sys,json; print(json.load(sys.stdin)$1)"; }
+          login() {
+            curl -fsS -X POST -H 'Content-Type: application/json' \
+              -d "{\"email\":\"$1\",\"password\":\"a-reasonable-passphrase\"}" $base/auth/login | json "['access_token']"
+          }
+          search() {
+            curl -fsS -X POST -H "Authorization: Bearer $1" -H 'Content-Type: application/json' \
+              -d '{"query":"how often do I have to change my password?","top_k":3}' $base/search
+          }
+
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d '{"email":"bob@example.com","password":"a-reasonable-passphrase"}' $base/auth/register > /dev/null
+          ada=$(login ci@example.com)
+          bob=$(login bob@example.com)
+
+          printf 'Security policy. Every employee must change their password every ninety days. Passwords need at least twelve characters.\n\nCafeteria. Lunch is served between noon and two in the main hall.\n' > policy.txt
+          id=$(curl -fsS -H "Authorization: Bearer $ada" -F 'file=@policy.txt;type=text/plain' $base/documents/upload | json "['id']")
+
+          # The first ingestion downloads the embedding model, so allow plenty of time.
+          for i in $(seq 1 90); do
+            state=$(curl -fsS -H "Authorization: Bearer $ada" $base/documents/$id/status | json "['status']")
+            echo "document status: $state"
+            [ "$state" = ready ] && break
+            [ "$state" = failed ] && { echo "ingestion failed"; exit 1; }
+            sleep 4
+          done
+          test "$state" = ready
+
+          result=$(search "$ada")
+          echo "$result"
+          echo "$result" | python3 -c "
+          import sys, json
+          hits = json.load(sys.stdin)['results']
+          assert hits, 'no results for the owner'
+          assert hits[0]['filename'] == 'policy.txt', hits[0]
+          assert 'ninety days' in hits[0]['content'], hits[0]
+          print('owner search ok, score', hits[0]['score'])"
+
+          other=$(search "$bob")
+          echo "$other" | python3 -c "
+          import sys, json
+          assert json.load(sys.stdin)['results'] == [], 'another user must get nothing'
+          print('isolation ok')"
       - name: Logs on failure
         if: failure()
         run: docker compose logs --no-color --tail=100

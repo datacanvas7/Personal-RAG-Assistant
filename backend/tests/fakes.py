@@ -4,6 +4,9 @@ They implement only what the service layer calls. Behavior that needs a real dat
 (row locking, constraints, cascades) is covered by tests/integration instead.
 """
 
+import hashlib
+import math
+import re
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -105,8 +108,50 @@ class FakeDocumentStore:
     async def count_for_user(self, user_id: uuid.UUID) -> int:
         return sum(1 for d in self.documents.values() if d.user_id == user_id)
 
+    async def filenames(
+        self, user_id: uuid.UUID, document_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        return {
+            i: d.filename
+            for i in document_ids
+            if (d := self.documents.get(i)) is not None and d.user_id == user_id
+        }
+
     async def delete(self, document: Document) -> None:
         del self.documents[document.id]
+
+
+class FakeEmbedder:
+    """Deterministic embeddings without a model: a hashed bag of words, L2-normalized.
+
+    Texts that share words get a high cosine similarity, which is all the retrieval tests
+    need ("password reset" is close to "how do I reset my password")."""
+
+    def __init__(self, dimension: int = 384, model_id: str = "fake:bag-of-words:384") -> None:
+        self.dimension = dimension
+        self.model_id = model_id
+        self.fail_with: Exception | None = None
+        self.calls = 0
+
+    def _embed(self, text: str) -> list[float]:
+        vector = [0.0] * self.dimension
+        for word in re.findall(r"[a-z0-9]+", text.lower()):
+            digest = hashlib.sha256(word.encode()).digest()
+            vector[int.from_bytes(digest[:4], "big") % self.dimension] += 1.0
+        norm = math.sqrt(sum(v * v for v in vector)) or 1.0
+        return [v / norm for v in vector]
+
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        self.calls += 1
+        if self.fail_with:
+            raise self.fail_with
+        return [self._embed(t) for t in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        self.calls += 1
+        if self.fail_with:
+            raise self.fail_with
+        return self._embed(text)
 
 
 class FakeFileStorage:
@@ -157,6 +202,8 @@ class FakeIngestionStore:
         self.total_pages: int | None = None
         self.total_chunks: int | None = None
         self.chunks: list[Chunk] = []
+        self.embeddings: list[list[float]] = []
+        self.embedding_model: str | None = None
         self.exists = True
         self.fail_on_replace: Exception | None = None
 
@@ -170,13 +217,22 @@ class FakeIngestionStore:
         return ClaimedDocument(self.document_id, self.user_id, self.storage_path, extension)
 
     def replace_chunks(
-        self, document_id: uuid.UUID, chunks: Sequence[Chunk], *, total_pages: int | None
+        self,
+        document_id: uuid.UUID,
+        chunks: Sequence[Chunk],
+        embeddings: Sequence[Sequence[float]],
+        *,
+        embedding_model: str,
+        total_pages: int | None,
     ) -> bool:
         if not self.exists:
             return False
         if self.fail_on_replace:
             raise self.fail_on_replace  # the real transaction rolls back: nothing changes
+        assert len(chunks) == len(embeddings)
         self.chunks = list(chunks)
+        self.embeddings = [list(e) for e in embeddings]
+        self.embedding_model = embedding_model
         self.status = DocumentStatus.READY
         self.total_pages = total_pages
         self.total_chunks = len(chunks)

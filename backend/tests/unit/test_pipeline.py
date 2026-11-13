@@ -6,10 +6,11 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from app.core.config import Settings
+from app.embeddings.base import EmbeddingError, EmbeddingUnavailableError
 from app.ingestion.pipeline import IngestionOutcome, run_ingestion
 from app.models import DocumentStatus
 from app.services.storage import LocalFileStorage
-from tests.fakes import FakeIngestionStore
+from tests.fakes import FakeEmbedder, FakeIngestionStore
 from tests.samples import long_text, make_docx, make_pdf
 
 SETTINGS = Settings(chunk_size_chars=400, chunk_overlap_chars=60)
@@ -20,8 +21,16 @@ def _setup(tmp_path: Path, name: str, data: bytes) -> tuple[FakeIngestionStore, 
     return FakeIngestionStore(storage_path=name), LocalFileStorage(tmp_path)
 
 
-def _run(store: FakeIngestionStore, storage: LocalFileStorage) -> IngestionOutcome:
-    return run_ingestion(store.document_id, store=store, storage=storage, settings=SETTINGS)
+def _run(
+    store: FakeIngestionStore, storage: LocalFileStorage, embedder: FakeEmbedder | None = None
+) -> IngestionOutcome:
+    return run_ingestion(
+        store.document_id,
+        store=store,
+        storage=storage,
+        embedder=embedder or FakeEmbedder(),
+        settings=SETTINGS,
+    )
 
 
 def test_pdf_chunks_carry_the_right_page_numbers(tmp_path: Path) -> None:
@@ -178,3 +187,56 @@ def test_database_errors_propagate_so_the_task_can_retry(tmp_path: Path) -> None
     assert store.status is DocumentStatus.PROCESSING
     store.fail_on_replace = None
     assert _run(store, storage) is IngestionOutcome.READY
+
+
+def test_every_chunk_is_stored_with_a_vector_and_the_model_that_made_it(tmp_path: Path) -> None:
+    store, storage = _setup(tmp_path, "d.txt", long_text(30).encode())
+    embedder = FakeEmbedder()
+
+    assert _run(store, storage, embedder) is IngestionOutcome.READY
+
+    assert len(store.embeddings) == len(store.chunks) > 1
+    assert all(len(v) == embedder.dimension for v in store.embeddings)
+    assert store.embedding_model == embedder.model_id
+
+
+def test_a_permanent_embedding_error_fails_the_document_without_leaking_details(
+    tmp_path: Path,
+) -> None:
+    store, storage = _setup(tmp_path, "d.txt", long_text(5).encode())
+    embedder = FakeEmbedder()
+    embedder.fail_with = EmbeddingError("401 invalid api key sk-secret")
+
+    assert _run(store, storage, embedder) is IngestionOutcome.FAILED
+
+    assert store.status is DocumentStatus.FAILED
+    assert store.error_message is not None
+    assert "sk-secret" not in store.error_message
+    assert store.chunks == []
+
+
+def test_a_transient_embedding_error_propagates_so_the_task_can_retry(tmp_path: Path) -> None:
+    store, storage = _setup(tmp_path, "d.txt", long_text(5).encode())
+    embedder = FakeEmbedder()
+    embedder.fail_with = EmbeddingUnavailableError("provider down")
+
+    with pytest.raises(EmbeddingUnavailableError):
+        _run(store, storage, embedder)
+
+    # Still claimable: the retry (or a redelivery) starts from "processing".
+    assert store.status is DocumentStatus.PROCESSING
+    assert store.chunks == []
+    embedder.fail_with = None
+    assert _run(store, storage, embedder) is IngestionOutcome.READY
+
+
+def test_a_provider_returning_the_wrong_number_of_vectors_fails_the_document(
+    tmp_path: Path,
+) -> None:
+    store, storage = _setup(tmp_path, "d.txt", long_text(30).encode())
+    embedder = FakeEmbedder()
+    embedder.embed_documents = lambda texts: [[0.0] * embedder.dimension]  # type: ignore[method-assign]
+
+    assert _run(store, storage, embedder) is IngestionOutcome.FAILED
+
+    assert store.chunks == []

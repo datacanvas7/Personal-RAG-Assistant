@@ -22,6 +22,18 @@ dependencies = [
     "pymupdf~=1.28.0",
     "python-docx~=1.2.0",
     "python-multipart~=0.0.33",
+    "openai~=3.51.0",
+]
+
+[project.optional-dependencies]
+# The local embedding model. Optional because it pulls in PyTorch (hundreds of MB): the
+# Docker image installs it by default (INSTALL_LOCAL_EMBEDDINGS), CI and unit tests do not
+# need it. Without it, set EMBEDDING_PROVIDER=openai.
+local-embeddings = [
+    "sentence-transformers~=6.3.0",
+    # Listed directly so the CPU-only index below applies to it (uv sources apply only to
+    # direct dependencies).
+    "torch~=2.15.0",
 ]
 
 [dependency-groups]
@@ -36,6 +48,16 @@ dev = [
 [tool.uv]
 # This is an application, not a library: nothing to build or publish.
 package = false
+
+# On Linux (Docker, CI) PyPI's PyTorch is the CUDA build with several GB of NVIDIA
+# libraries. The CPU-only build is all a 384-d embedding model needs.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 100
@@ -59,6 +81,11 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 # Celery ships no type information.
 module = ["celery.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Optional extra (`local-embeddings`): not installed in the CI backend job.
+module = ["sentence_transformers.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

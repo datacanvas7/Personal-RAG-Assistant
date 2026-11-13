@@ -430,6 +430,50 @@ Overlap is seeded at a word boundary within the same page. Formats without pages
 (`UPLOAD_DIR`). The worker uses a synchronous SQLAlchemy engine created lazily after the
 fork; the API uses the async engine.
 
+### 7.4 Embeddings and search as implemented (Phase 4)
+
+**Providers** (`app/embeddings/`): a synchronous `EmbeddingProvider` Protocol. The API calls
+it with `asyncio.to_thread` so a CPU-bound model or blocking HTTP client never stalls the
+event loop; the worker calls it directly. `model_id` is `provider:model:dimension` and is
+stored per document in `documents.embedding_model`.
+
+| Provider | Notes |
+|---|---|
+| SentenceTransformers (default) | Local, no key, nothing leaves the machine. Model loaded lazily once per process. Vectors are L2-normalised; the BGE instruction prefix is added to queries only. Needs the `local-embeddings` extra (CPU PyTorch in Docker, build arg `INSTALL_LOCAL_EMBEDDINGS`). Weights are cached in the `models` volume (`HF_HOME=/data/models`). |
+| OpenAI | Opt-in: document text is sent to OpenAI. `text-embedding-3-*` is asked for `EMBEDDING_DIMENSION` dimensions so it fits the same column. Rate limits, timeouts and 5xx are transient; other 4xx are permanent. Not yet exercised against the real API. |
+
+**Ingestion:** after chunking, all chunk texts are embedded *before* the database transaction
+(no row lock is held during slow work). `replace_chunks` then writes chunks, vectors,
+`embedding_model` and `ready` atomically. `EmbeddingUnavailableError` propagates and Celery
+retries (backoff 5·2ⁿ s, three times); `EmbeddingError` marks the document `failed` with a
+generic message and logs the detail.
+
+**Search** (`POST /search`, POST so the query stays out of URLs and logs): embed the query →
+`SET LOCAL hnsw.iterative_scan = relaxed_order` → one SQL statement
+`WHERE user_id = :uid AND embedding IS NOT NULL [AND document_id IN (...)]
+ORDER BY embedding <=> :q LIMIT :k` → one lookup of file names (also filtered by user). Score
+is 1 − cosine distance. Ids of documents the caller does not own simply match nothing (no 404,
+so ids are not revealed). An unavailable embedder is a generic `503 service_unavailable`.
+`VectorStore` is the read side only; writes stay in the atomic ingestion transaction.
+
+**Why iterative scan:** HNSW is approximate and the `WHERE` is applied *after* the index
+returns its candidates (40 by default). When most vectors belong to other users, a plain
+filtered query can return fewer than `top_k` rows, or none. pgvector 0.8 can keep scanning
+until enough rows pass the filter; the setting is harmless on older versions (results may then
+be short). CI and Compose use pgvector 0.8.
+
+**Index:** `ix_document_chunks_embedding_hnsw` (`vector_cosine_ops`, `m=16`,
+`ef_construction=64`) — cosine because the vectors are normalised.
+
+**Guarding against model mix-ups:** vectors from different models are not comparable, and
+searching one with the other returns plausible-looking nonsense rather than an error. At API
+start the guard compares the configuration with the database (column dimension; the
+`embedding_model` of ready documents) and refuses to start with instructions. Switching models
+is deliberate: change `EMBEDDING_*`, run `python -m app.scripts.reindex` (resets stale ready
+documents to `pending`, erases their vectors in the same transaction, queues them), then let
+the worker finish. Limits: the worker does not run the guard, and a changed
+`EMBEDDING_DIMENSION` also needs a migration of the column type.
+
 ---
 
 ## 8. Security issues and planned mitigations
@@ -493,17 +537,20 @@ Defined in `.env.example` in Phase 1. Values marked *secret* are never committed
 | `MAX_UPLOAD_SIZE_MB` | `25` | Upload cap |
 | `ALLOWED_EXTENSIONS` | `pdf,txt,md,docx` | Upload allow-list |
 | `EMBEDDING_PROVIDER` | `sentence_transformers` \| `openai` | Embedding backend |
-| `EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Model name |
+| `EMBEDDING_MODEL` | empty = provider default (`BAAI/bge-small-en-v1.5`) | Model name |
 | `EMBEDDING_DIMENSION` | `384` | Must match the model and the DB column |
-| `EMBEDDING_BATCH_SIZE` | `32` | Worker batching |
+| `EMBEDDING_BATCH_SIZE` | `32` | Texts per model call |
+| `EMBEDDING_QUERY_PREFIX` | BGE instruction | Prepended to search queries only |
+| `EMBEDDING_TIMEOUT_SECONDS` | see `.env.example` | OpenAI request timeout |
+| `INSTALL_LOCAL_EMBEDDINGS` | `true` | Docker build arg: include the local model in the image |
 | `LLM_PROVIDER` | `openai` \| `ollama` | LLM backend |
-| `OPENAI_API_KEY` | *secret* | OpenAI access (only if used) |
+| `OPENAI_API_KEY` | *secret* | OpenAI access (required when `EMBEDDING_PROVIDER=openai`) |
 | `OPENAI_CHAT_MODEL` | set in Phase 5 | Chat model |
 | `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | `http://host.docker.internal:11434` / set in Phase 5 | Local LLM |
 | `LLM_TEMPERATURE` / `LLM_MAX_OUTPUT_TOKENS` | `0.1` / `1024` | Generation |
 | `CHUNK_SIZE_TOKENS` / `CHUNK_OVERLAP_TOKENS` | `800` / `150` | Chunking |
 | `RETRIEVAL_TOP_K` | `5` | Chunks per query |
-| `RETRIEVAL_SCORE_THRESHOLD` | tuned in Phase 4 | Minimum similarity |
+| `RETRIEVAL_SCORE_THRESHOLD` | tuned in Phase 5 | Minimum similarity |
 | `CHAT_HISTORY_MAX_MESSAGES` | `6` | History window |
 | `MAX_CONTEXT_TOKENS` | `6000` | Context budget |
 | `HYBRID_SEARCH_ENABLED` / `RERANKER_ENABLED` | `false` | Phase 9 features |

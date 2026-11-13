@@ -70,3 +70,27 @@ def test_production_refuses_unsafe_configuration(overrides: dict[str, object]) -
     Settings(**safe)  # type: ignore[arg-type]  # the safe baseline is accepted
     with pytest.raises(ValidationError):
         Settings(**(safe | overrides))  # type: ignore[arg-type]
+
+
+def test_openai_embeddings_require_an_api_key() -> None:
+    with pytest.raises(ValidationError, match="OPENAI_API_KEY"):
+        Settings(postgres_password="x", embedding_provider="openai", openai_api_key=None)
+
+
+def test_embedding_model_defaults_depend_on_the_provider() -> None:
+    local = Settings(postgres_password="x")
+    hosted = Settings(postgres_password="x", embedding_provider="openai", openai_api_key="sk-test")
+
+    assert local.resolved_embedding_model == "BAAI/bge-small-en-v1.5"
+    assert hosted.resolved_embedding_model == "text-embedding-3-small"
+    assert Settings(
+        postgres_password="x", embedding_model="org/other"
+    ).resolved_embedding_model == ("org/other")
+
+
+def test_openai_key_is_not_exposed_by_repr() -> None:
+    settings = Settings(
+        postgres_password="x", embedding_provider="openai", openai_api_key="sk-very-secret"
+    )
+
+    assert "sk-very-secret" not in repr(settings)
