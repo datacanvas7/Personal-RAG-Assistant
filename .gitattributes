@@ -1,0 +1,9 @@
+# The code is written on Windows but runs in Linux containers. Store and check out
+# text as LF everywhere so shell scripts and Docker entrypoints do not break on CRLF.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary
+*.docx binary

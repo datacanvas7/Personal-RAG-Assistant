@@ -1,0 +1,150 @@
+# Personal RAG Assistant — local stack.
+#   docker compose up --build        start everything
+#   docker compose up --build --wait start and block until all health checks pass
+#
+# Only the frontend (3000) and the API (8000) are published. Postgres and Redis are
+# reachable from other containers, and from the host only on loopback.
+
+name: personal-rag-assistant
+
+x-backend-environment: &backend-environment
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-rag}
+  POSTGRES_USER: ${POSTGRES_USER:-rag}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (copy .env.example)}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+  BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-}
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rag}
+      POSTGRES_USER: ${POSTGRES_USER:-rag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (copy .env.example)}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks: [backend]
+
+  redis:
+    image: redis:8.10-alpine
+    restart: unless-stopped
+    # AOF persistence so queued ingestion jobs survive a restart.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [backend]
+
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    restart: unless-stopped
+    environment: *backend-environment
+    volumes:
+      - uploads:/data/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Fails on any non-2xx, including the 503 the endpoint returns when a dependency is down.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=4)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    networks: [backend, frontend]
+
+  worker:
+    build:
+      context: ./backend
+      target: runtime
+    restart: unless-stopped
+    # Same image as the API, different process. The explicit node name lets the health
+    # check address this worker.
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app
+      - worker
+      - --loglevel=${LOG_LEVEL:-INFO}
+      - --hostname=worker@%h
+      - --concurrency=2
+    environment: *backend-environment
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d worker@$$HOSTNAME --timeout 5"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks: [backend]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_INTERNAL_URL: http://backend:8000
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    networks: [frontend]
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads:
+
+networks:
+  # Data services live only on `backend`; the frontend cannot reach them directly.
+  backend:
+  frontend:

@@ -1,0 +1,33 @@
+{
+  // Development environment for GitHub Codespaces (or any Dev Containers host).
+  // The application itself runs with Docker Compose *inside* this container, so the
+  // workflow is identical to a local machine: `docker compose up --build`.
+  "name": "Personal RAG Assistant",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": { "version": "24" },
+    "ghcr.io/devcontainers/features/sshd:1": {},
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  },
+  // uv manages the Python toolchain (it downloads the interpreter pinned in
+  // backend/.python-version on first use). A .env is created from the example so the
+  // stack starts without manual steps; it is git-ignored.
+  "postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && (test -f .env || cp .env.example .env)",
+  "forwardPorts": [3000, 8000],
+  "portsAttributes": {
+    "3000": { "label": "Frontend", "onAutoForward": "notify" },
+    "8000": { "label": "Backend API", "onAutoForward": "silent" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "dbaeumer.vscode-eslint",
+        "bradlc.vscode-tailwindcss",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  }
+}

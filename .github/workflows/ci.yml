@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (lint, types, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy app tests
+      - run: uv run pytest
+      - name: requirements.txt matches uv.lock
+        run: uv export --frozen --no-dev --no-hashes --no-emit-project --no-header -o /tmp/requirements.txt && diff -u requirements.txt /tmp/requirements.txt
+
+  frontend:
+    name: Frontend (lint, types, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+
+  compose-smoke:
+    name: Docker Compose smoke test
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v7
+      - run: cp .env.example .env
+      - name: Build and start the stack (waits for every health check)
+        run: docker compose up --build --wait --wait-timeout 300
+      - name: API reports Postgres, pgvector and Redis healthy
+        run: |
+          curl --fail --silent --show-error http://localhost:8000/api/v1/health | tee /dev/stderr \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['status']=='ok', d"
+      - name: Frontend proxies the API
+        run: |
+          curl --fail --silent --show-error http://localhost:3000/api/v1/health \
+            | python3 -c "import sys,json; assert json.load(sys.stdin)['status']=='ok'"
+      - name: Worker executes a task
+        run: |
+          docker compose exec -T backend python -c "
+          from app.workers.tasks import ping
+          assert ping.delay().get(timeout=20) == 'pong'
+          print('celery ping ok')"
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=100
+      - if: always()
+        run: docker compose down --volumes

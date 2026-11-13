@@ -1,0 +1,61 @@
+[project]
+name = "personal-rag-assistant-backend"
+version = "0.1.0"
+description = "FastAPI backend and Celery worker for the Personal RAG Assistant"
+requires-python = ">=3.13"
+# Ranges here state intent; exact versions (with hashes) are pinned in uv.lock.
+# Dependencies are added in the phase that first needs them.
+dependencies = [
+    "fastapi~=0.162.0",
+    "uvicorn[standard]~=0.54.0",
+    "pydantic~=2.14.0",
+    "pydantic-settings~=2.16.0",
+    "sqlalchemy[asyncio]~=2.1.0",
+    "psycopg[binary]~=3.3.0",
+    "celery[redis]~=5.7.0",
+    "redis>=5.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest~=9.2.0",
+    "pytest-asyncio~=1.5.0",
+    "httpx2~=2.16.0",
+    "ruff~=0.17.0",
+    "mypy~=2.4.0",
+]
+
+[tool.uv]
+# This is an application, not a library: nothing to build or publish.
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ASYNC", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Celery ships no type information.
+module = ["celery.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["app.workers.*"]
+disallow_untyped_decorators = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
