@@ -18,6 +18,21 @@ os.environ.setdefault("POSTGRES_PASSWORD", "test-password")
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-key-not-for-real-use-0123456789")
 
 
+@pytest.fixture(autouse=True)
+def _no_embedding_index_check_on_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Starting the app in a test must not read whatever database the environment points at.
+
+    In CI the integration tests leave rows behind (embedded with a fake model), and the real
+    startup guard would rightly refuse them. The guard itself is covered by
+    ``test_embedding_guard.py`` and ``tests/integration/test_search.py``.
+    """
+
+    async def _skip() -> None:
+        return None
+
+    monkeypatch.setattr("app.main._check_embedding_index", _skip)
+
+
 def _annotate(title: str, details: str) -> None:
     """Emit a GitHub Actions error annotation, visible on the run page without raw logs.
 
