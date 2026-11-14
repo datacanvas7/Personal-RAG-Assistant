@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 5 — implemented and tested locally; CI pending, real-model run pending** (2026-11-14)
+Current phase: **Phase 5 — verified in CI; one manual step open (real Gemini run with your key)** (2026-11-15)
 
 ---
 
@@ -130,10 +130,11 @@ rate limit until Phase 10.
 
 ## Phase 5 — RAG Engine
 
-Status: **implemented; unit and database integration tests, ruff and mypy strict pass locally
-(328 passed, 1 skipped — the pgvector ≥ 0.8 test, which runs in CI). Not yet pushed, so CI has not
-run. Not yet run against the real Gemini API** — that needs your key (see below), so the
-"cited answer from a real model" half of the exit criterion is still open.
+Status: **implemented and verified in CI (commit `625c9b8`, 2026-11-15): frontend, backend (lint,
+types, tests incl. the pgvector 0.8 test) and the Compose smoke test all green.** Locally: 328
+passed, 1 skipped. **Not yet run against the real Gemini API** — that needs your key (see below),
+so the "cited answer from a real model" half of the exit criterion is still open. CI never calls
+a model (no key there), so the Compose smoke test does not exercise `/ask`.
 
 - [x] Retrieval for answering (`RagService`): top-K, minimum-score threshold (`RETRIEVAL_SCORE_THRESHOLD`, 0.45) and document filters on top of `SearchService`; `user_id` only from the token
 - [ ] Reranker hook — **deferred to Phase 9** with hybrid search and reranking (nothing to plug in yet)
