@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 4 — implemented; local checks pass, CI not yet run** (2026-11-14)
+Current phase: **Phase 4 — complete and verified in CI; awaiting approval to start Phase 5** (2026-11-14)
 
 ---
 
@@ -98,11 +98,13 @@ proxy's request-body limit and any edge/proxy body limit (Phase 7 and Phase 10).
 
 ## Phase 4 — Embeddings and Vector Database
 
-Status: **implemented; verified locally, not yet in CI (2026-11-14).** 219 unit tests, ruff and
-mypy strict pass; the 45 database integration tests pass against a local PostgreSQL with
-pgvector 0.6.2; the real BGE model was run (relevant passage scores 0.82 against 0.27 / 0.25
-for unrelated ones, unit-length vectors). Items marked `[~]` can only be verified in CI
-(they need pgvector 0.8 or Docker).
+Status: **complete and verified in CI (commit `ce589b8`, 2026-11-14).** 220 unit tests, ruff and
+mypy strict pass; 45 database integration tests pass locally (pgvector 0.6.2) and in CI
+(pgvector 0.8.7, including the iterative-scan test); the Compose smoke test builds the image with
+the local model and runs upload → embed → search → second user gets nothing end to end. The real BGE
+model scores a relevant passage 0.82 against 0.27 / 0.25 for unrelated ones.
+The first CI run (`7acb6bd`) failed on a test-isolation bug (unit tests starting the app read rows
+left by the integration tests, and the startup guard correctly refused them); fixed in `ce589b8`.
 
 - [x] `EmbeddingProvider` interface (`app/embeddings/base.py`): `model_id`, `dimension`, `embed_documents`, `embed_query`; `EmbeddingUnavailableError` (retried) vs `EmbeddingError` (permanent)
 - [x] SentenceTransformers (BGE-small) provider: lazy load, normalised vectors, instruction prefix on queries only; optional extra `local-embeddings`, CPU-only PyTorch on Linux
@@ -114,10 +116,10 @@ for unrelated ones, unit-length vectors). Items marked `[~]` can only be verifie
 - [x] `POST /search` (`query`, `top_k` 1–50, optional `document_ids`)
 - [x] `python -m app.scripts.reindex`: resets ready documents embedded by another model, erases their vectors and re-queues them
 - [x] Tests: providers (OpenAI mocked), config, guard, pipeline embedding paths, search API (validation, auth, isolation, 503), real-database search / ranking / index / guard / reindex / migration, real BGE model (skipped unless the extra is installed)
-- [~] `hnsw.iterative_scan` keeps filtered search complete when other users dominate the index — its test skips below pgvector 0.8; **runs in CI**
-- [~] Compose: image builds with the local model, `models` volume, end-to-end step (upload → ready → search → second user gets nothing) — **CI only (no Docker on the dev machine)**
+- [x] `hnsw.iterative_scan` keeps filtered search complete when other users dominate the index — its test skips below pgvector 0.8 and runs in CI
+- [x] Compose: image builds with the local model, `models` volume, end-to-end step (upload → ready → search → second user gets nothing) — verified in CI
 - **Exit:** a query returns the expected chunks for the owning user and nothing for
-  another user — met by the isolation tests (unit and real database); CI confirmation pending.
+  another user — met by the isolation tests (unit, real database and the CI end-to-end step).
 
 Deviations from the plan: `VectorStore` is the read side only — vectors are written by the
 ingestion transaction so a document is never half-indexed. LangChain is not used for
