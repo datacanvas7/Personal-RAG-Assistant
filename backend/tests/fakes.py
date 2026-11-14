@@ -15,6 +15,7 @@ from pathlib import Path
 from sqlalchemy.exc import IntegrityError
 
 from app.ingestion.chunking import Chunk
+from app.llm.base import ChatMessage, LLMResult
 from app.models import Document, DocumentStatus, RefreshToken, User
 from app.repositories.documents import ClaimedDocument
 
@@ -255,3 +256,20 @@ class Clock:
 
     def __call__(self) -> datetime:
         return self.current
+
+
+class FakeLLM:
+    """Scripted language model: returns the queued reply (or raises it) and records the prompt."""
+
+    model_id = "fake-llm"
+
+    def __init__(self, *replies: str | Exception) -> None:
+        self.replies: list[str | Exception] = list(replies)
+        self.calls: list[list[ChatMessage]] = []
+
+    async def complete(self, messages: Sequence[ChatMessage]) -> LLMResult:
+        self.calls.append(list(messages))
+        reply = self.replies.pop(0) if self.replies else "Fine. [1]"
+        if isinstance(reply, Exception):
+            raise reply
+        return LLMResult(text=reply, prompt_tokens=10, completion_tokens=5)

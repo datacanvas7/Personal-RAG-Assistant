@@ -3,8 +3,9 @@
 Upload your own documents (PDF, TXT, Markdown, DOCX) and ask questions about them. Answers are
 generated from retrieved passages of *your* documents only and come with citations.
 
-> **Status: Phase 4 of 11 — embeddings and search.** Accounts, login, document upload and
-> processing exist, and your documents can be searched semantically; there is no chat or UI yet.
+> **Status: Phase 5 of 11 — question answering.** Accounts, login, document upload and
+> processing exist, your documents can be searched semantically, and `POST /ask` answers
+> questions with citations (needs a free Gemini key); there is no saved chat or UI yet.
 > See [docs/PROGRESS.md](docs/PROGRESS.md) for what works and
 > [docs/architecture.md](docs/architecture.md) for the design. This README grows with the project.
 
@@ -27,7 +28,7 @@ docker compose up --build --wait
 Database migrations run automatically: a one-shot `migrate` container applies
 `alembic upgrade head` before the API and worker start. If you had a `.env` from an
 earlier phase, add the new variables from `.env.example` (at least `JWT_SECRET_KEY`; Phase 4
-adds the optional `EMBEDDING_*` ones).
+adds the optional `EMBEDDING_*` ones, Phase 5 the `LLM_*` and `RETRIEVAL_*` ones).
 
 Try the auth API (Swagger UI at `/api/v1/docs` works too):
 
@@ -53,6 +54,32 @@ Once the document is `ready`, search your own documents (POST, so the query stay
 curl -s -X POST localhost:8000/api/v1/search -H "Authorization: Bearer <access_token>" \
   -H 'Content-Type: application/json' -d '{"query": "how often must I change my password?", "top_k": 3}'
 ```
+
+Ask a question and get an answer built only from your own documents, with sources:
+
+```bash
+curl -s -X POST localhost:8000/api/v1/ask -H "Authorization: Bearer <access_token>" \
+  -H 'Content-Type: application/json' -d '{"question": "How often must I change my password?"}'
+# {"answer": "Every 90 days [1].", "grounded": true,
+#  "sources": [{"number": 1, "filename": "policy.pdf", "page_number": 3, "excerpt": "...", ...}]}
+```
+
+If your documents don't contain the answer you get "I couldn't find this in your documents."
+(`grounded: false`, no sources). To follow up, send the earlier turns as `history`
+(`[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]`).
+
+`/ask` needs a language model. The default is Google Gemini, which has a free tier: create a
+key at https://aistudio.google.com/apikey, put it in `.env` as `LLM_API_KEY=...` (never commit
+it) and restart the stack. Without a key everything else works and `/ask` answers 503. Gemini
+renames and retires models often, so check what your key can use right now:
+
+```bash
+docker compose run --rm backend python -m app.scripts.check_llm
+```
+
+If it warns that the model isn't available, set `LLM_MODEL` in `.env`. Any OpenAI-compatible
+service works by changing `LLM_BASE_URL`, `LLM_MODEL` and `LLM_API_KEY` (see `.env.example`).
+Note that the text of the passages found for a question is sent to that service.
 
 The first document you process downloads the local embedding model (about 130 MB, kept in
 the `models` volume). To use OpenAI instead, set `EMBEDDING_PROVIDER=openai` and

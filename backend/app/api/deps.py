@@ -15,7 +15,10 @@ from app.core.errors import AuthenticationError
 from app.db.session import get_engine, get_session
 from app.embeddings.base import EmbeddingProvider
 from app.embeddings.factory import get_embedding_provider
+from app.llm.base import LLMProvider
+from app.llm.factory import get_llm_provider
 from app.models import User
+from app.rag.service import RagService
 from app.repositories.auth import RefreshTokenRepository, UserRepository
 from app.repositories.documents import DocumentRepository
 from app.retrieval.service import SearchService
@@ -89,10 +92,33 @@ def get_search_service(session: SessionDep, embedder: EmbedderDep) -> SearchServ
     )
 
 
+def get_llm() -> LLMProvider | None:
+    return get_llm_provider()
+
+
+LlmDep = Annotated[LLMProvider | None, Depends(get_llm)]
+
+
+def get_rag_service(
+    search: Annotated[SearchService, Depends(get_search_service)],
+    llm: LlmDep,
+    settings: SettingsDep,
+) -> RagService:
+    return RagService(
+        searcher=search,
+        llm=llm,
+        top_k=settings.retrieval_top_k,
+        score_threshold=settings.retrieval_score_threshold,
+        max_context_chars=settings.max_context_chars,
+        history_max_messages=settings.chat_history_max_messages,
+    )
+
+
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
 SearchServiceDep = Annotated[SearchService, Depends(get_search_service)]
+RagServiceDep = Annotated[RagService, Depends(get_rag_service)]
 
 
 async def get_current_user(

@@ -74,6 +74,7 @@ class Stack:
     storage: LocalFileStorage
     queue: InlineQueue
     root: Path
+    app: FastAPI
 
 
 @pytest.fixture
@@ -94,7 +95,7 @@ async def stack(migrated_engine: Engine, tmp_path: Path) -> AsyncIterator[Stack]
     app.dependency_overrides[get_embedder] = FakeEmbedder  # same model as the inline worker
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield Stack(client, migrated_engine, storage, queue, tmp_path)
+        yield Stack(client, migrated_engine, storage, queue, tmp_path, app)
     await async_engine.dispose()
 
 

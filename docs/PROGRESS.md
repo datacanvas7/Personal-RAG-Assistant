@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 4 — complete and verified in CI; awaiting approval to start Phase 5** (2026-11-14)
+Current phase: **Phase 5 — implemented and tested locally; CI pending, real-model run pending** (2026-11-14)
 
 ---
 
@@ -14,7 +14,7 @@ Current phase: **Phase 4 — complete and verified in CI; awaiting approval to s
 - [x] Docker location decided: **GitHub Codespaces** (no local Docker / WSL2 needed)
 - [x] Python 3.13 provided by `uv` (no admin needed); host Python 3.10 left untouched
 - [x] Repo pushed to GitHub (datacanvas7/Personal-RAG-Assistant)
-- [ ] Decide LLM for development: OpenAI key or Ollama
+- [x] LLM for development: **Google Gemini** via its OpenAI-compatible endpoint (free tier; key from https://aistudio.google.com/apikey goes in `.env` as `LLM_API_KEY`)
 - [ ] Windows long paths disabled (`git config --global core.longpaths true`)
 
 ## Phase 0 — Project Planning
@@ -130,15 +130,35 @@ rate limit until Phase 10.
 
 ## Phase 5 — RAG Engine
 
-- [ ] Retrieval service (top-K, threshold, filters, reranker hook)
-- [ ] Prompt builder (grounding + injection rules, numbered context)
-- [ ] `LLMProvider` interface; OpenAI provider; Ollama provider
-- [ ] Grounded generation with no-evidence short-circuit
-- [ ] Citation parsing and structured sources
-- [ ] Conversation history window and context budget
-- [ ] Tests: prompt construction, citations, insufficient evidence, injection fixture
-- **Exit:** end-to-end pipeline test (fake LLM) passes; a manual run with a real
-  LLM gives a cited answer.
+Status: **implemented; unit and database integration tests, ruff and mypy strict pass locally
+(328 passed, 1 skipped — the pgvector ≥ 0.8 test, which runs in CI). Not yet pushed, so CI has not
+run. Not yet run against the real Gemini API** — that needs your key (see below), so the
+"cited answer from a real model" half of the exit criterion is still open.
+
+- [x] Retrieval for answering (`RagService`): top-K, minimum-score threshold (`RETRIEVAL_SCORE_THRESHOLD`, 0.45) and document filters on top of `SearchService`; `user_id` only from the token
+- [ ] Reranker hook — **deferred to Phase 9** with hybrid search and reranking (nothing to plug in yet)
+- [x] Prompt builder (`app/rag/prompt_builder.py`): rules-only system message; retrieved text in the user message inside `<documents><passage number file page>` tags that document text cannot close; untrusted-data and no-reveal rules; exact "not found" sentence
+- [x] `LLMProvider` interface (`app/llm/base.py`) and one OpenAI-compatible adapter (Gemini by default; also OpenAI, Groq, OpenRouter, Ollama); temporary failures (`LLMUnavailableError`) vs permanent (`LLMError`)
+- [x] Grounded generation with a no-evidence short-circuit: nothing above the threshold → "not found" **without calling the model**
+- [x] Citation parsing (`app/rag/citations.py`): `[n]` markers the model invented are stripped, sources are only the passages actually cited, `grounded=false` when nothing is cited or the model says it doesn't know
+- [x] History window (`CHAT_HISTORY_MAX_MESSAGES`, user/assistant roles only, old `[n]` markers stripped) and context budget (`MAX_CONTEXT_CHARS`, best passage always kept)
+- [x] `POST /api/v1/ask` (stateless: `question`, optional `history`, `document_ids`, `top_k`) → `answer`, `grounded`, `sources[]`; 503 `service_unavailable` (no internals) when the model is missing, busy or rejects the request
+- [x] `python -m app.scripts.check_llm`: lists the models your key can use and sends one test request (never prints the key)
+- [x] Tests: prompt construction and injection fixture, citations, insufficient evidence, provider error mapping (SDK client mocked), service, API with real `SearchService` and in-memory vectors, and against real pgvector (second user gets "not found", model not called)
+- [ ] **Manual run with a real model** — your step: put `LLM_API_KEY` in `.env`, run `python -m app.scripts.check_llm`, then ask a question (README)
+- **Exit:** end-to-end pipeline test (fake LLM) passes — met locally; a manual run with a real
+  LLM gives a cited answer — **open**.
+
+Deviations from the plan: one OpenAI-compatible adapter instead of separate OpenAI and Ollama
+providers, selected by `LLM_BASE_URL` / `LLM_MODEL` (there is no `LLM_PROVIDER`), because every
+target speaks the same protocol. `/ask` is stateless; stored conversations and streaming are
+Phase 6. There is no question-rewriting step, so a follow-up like "and the second one?" is
+searched as written (Phase 9; it would also spend a second free-tier request per question). The
+0.45 threshold is a starting point, not tuned on real documents (Phase 11 evaluation). The
+default model name `gemini-3.5-flash-lite` came from Google's docs on 2026-11-14 and is not
+confirmed to be on the free tier for your key — `check_llm` shows what you can use. The context
+budget counts characters, not tokens. Documents are not scanned for injection beyond the
+prompt-level defences; those reduce but cannot eliminate the risk.
 
 ## Phase 6 — Chat API
 

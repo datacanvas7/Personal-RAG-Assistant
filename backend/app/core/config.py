@@ -75,6 +75,29 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     embedding_timeout_seconds: float = Field(default=30.0, gt=0)
 
+    # --- Language model ---------------------------------------------------------------
+    # Any OpenAI-compatible endpoint. The defaults target Google's Gemini API, which has a
+    # free tier; the model name is configuration because Google retires models regularly
+    # (check https://ai.google.dev/gemini-api/docs/models). Unset key = answering disabled.
+    llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    llm_api_key: SecretStr | None = None
+    llm_model: str = "gemini-3.5-flash-lite"
+    llm_temperature: float = Field(default=0.1, ge=0, le=2)
+    # Reasoning models count their hidden "thinking" against this budget, so keep it generous.
+    llm_max_output_tokens: int = Field(default=2048, ge=16, le=65536)
+    llm_timeout_seconds: float = Field(default=60.0, gt=0)
+    # Passed through as ``reasoning_effort`` when set (e.g. "low"); empty = the model's default.
+    llm_reasoning_effort: str | None = None
+
+    # --- Retrieval and answering ------------------------------------------------------
+    retrieval_top_k: int = Field(default=5, ge=1, le=20)
+    # Chunks scoring below this cosine similarity are not used. A starting point: it is
+    # tuned against a labelled question set in Phase 11.
+    retrieval_score_threshold: float = Field(default=0.45, ge=0, le=1)
+    # Size budget for the retrieved passages in one prompt, in characters (like chunking).
+    max_context_chars: int = Field(default=12_000, ge=500)
+    chat_history_max_messages: int = Field(default=6, ge=0, le=40)
+
     # --- Documents --------------------------------------------------------------------
     # Where uploaded files live. In Docker this is a volume shared by the API and the
     # worker, because the API writes the file and the worker reads it.

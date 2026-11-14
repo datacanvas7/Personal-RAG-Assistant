@@ -101,7 +101,7 @@ flowchart LR
     W -- chunks + vectors --> PG
     API -- embed query --> EMB[Embedding provider<br/>local BGE or OpenAI]
     W -- embed chunks --> EMB
-    API -- prompt, stream --> LLM[LLM provider<br/>OpenAI or Ollama]
+    API -- prompt, stream --> LLM[LLM provider<br/>any OpenAI-compatible API, Gemini by default]
 ```
 
 ### Backend layering
@@ -127,7 +127,7 @@ embedding providers.
 | `VectorStore` | `insert`, `delete_by_document`, `search(user_id, …)` | pgvector via SQLAlchemy |
 | `Retriever` | `retrieve(user_id, query, filters) -> list[RetrievedChunk]` | Semantic; Hybrid (Phase 9) |
 | `Reranker` | `rerank(query, chunks)` | No-op; cross-encoder (Phase 9) |
-| `LLMProvider` | `generate`, `stream` | OpenAI, Ollama |
+| `LLMProvider` | `complete` (`stream` arrives with Phase 6) | One OpenAI-compatible adapter: Gemini, OpenAI, Groq, OpenRouter, Ollama |
 | `StorageBackend` | `save`, `open`, `delete` | Local volume (S3-compatible later) |
 
 ---
@@ -150,7 +150,7 @@ embedding providers.
 | 2 | **Retrieval SQL is written by us** (SQLAlchemy + `pgvector`), not LangChain's `PGVector` store. | We must guarantee `WHERE user_id = :uid` in the query itself, control the schema via Alembic, and later fuse with full-text search. LangChain's store owns its own tables. | `langchain-postgres` vector store. |
 | 3 | **One active embedding model per deployment.** Dimension is fixed in the column type (`vector(N)`); model name + dimension are recorded in the DB and checked at startup; switching models is an explicit re-index script. | pgvector indexes need a fixed dimension, and vectors from different models are not comparable. | Per-row model with mixed dimensions. |
 | 4 | **Default embeddings: local `BAAI/bge-small-en-v1.5` (384-d)**, OpenAI `text-embedding-3-small` as the alternative. | Works with no API key, free, good quality for its size, deterministic in tests. Runs on CPU. | OpenAI-only — blocks development without a key. |
-| 5 | **Default LLM: OpenAI; Ollama as local option**; model names are config. Automated tests use a fake `LLMProvider`. | Matches the brief; no network or cost in CI. The specific default model is chosen in Phase 5 from current docs. | Hard-coding a model. |
+| 5 | **LLM: one OpenAI-compatible adapter; default Google Gemini (free tier)**, chosen in Phase 5 because the user wanted a free key. Provider and model are config (`LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`); OpenAI, Groq, OpenRouter and Ollama work by changing them. Automated tests use a fake `LLMProvider`. | Gemini, OpenAI, Groq, OpenRouter and Ollama all speak the OpenAI chat protocol, so one small adapter covers them and switching needs no code. No network or cost in CI. | Separate OpenAI and Ollama classes (more code, same protocol); LangChain chat models (heavier, less typed). |
 | 6 | **psycopg 3 for both API (async) and worker (sync).** | One driver, one set of behaviours; pgvector has a psycopg adapter. | asyncpg + psycopg2 — two drivers to keep in step. |
 | 7 | **Auth: short-lived access JWT (≈15 min) sent as `Authorization: Bearer`, held in memory; refresh token in an `httpOnly`, `SameSite` cookie, rotated on use, stored hashed in a `refresh_tokens` table.** Argon2id for passwords. | Access token is not readable from storage by injected scripts for long; logout and theft detection need server-side revocation, which pure stateless JWT cannot do. | Both tokens in `localStorage`; or no revocation. |
 | 8 | **Streaming = Server-Sent Events over `POST`**, consumed with `fetch` + a stream reader. Events: `token`, `sources`, `done`, `error`. | Browser `EventSource` cannot POST or send an auth header. SSE is simpler than WebSockets for one-way output. | WebSockets. |
@@ -267,8 +267,8 @@ personal-rag-assistant/
 │   │   ├── ingestion/              loaders/, cleaning, chunking, pipeline
 │   │   ├── embeddings/             base, sentence_transformers, openai, factory
 │   │   ├── retrieval/              vector_store, retriever, hybrid, rerank
-│   │   ├── llm/                    base, openai, ollama, factory
-│   │   ├── rag/                    prompt_builder, citations, pipeline
+│   │   ├── llm/                    base, openai_compatible, factory
+│   │   ├── rag/                    prompt_builder, citations, service
 │   │   ├── workers/                celery_app, tasks
 │   │   └── utils/
 │   ├── tests/                      unit/, integration/, fixtures/
@@ -474,6 +474,43 @@ documents to `pending`, erases their vectors in the same transaction, queues the
 the worker finish. Limits: the worker does not run the guard, and a changed
 `EMBEDDING_DIMENSION` also needs a migration of the column type.
 
+### 7.5 Answering as implemented (Phase 5)
+
+`POST /ask` (stateless; saved conversations and streaming are Phase 6) → `RagService.answer`:
+
+1. **Retrieve** with `SearchService` (`user_id` from the token only, optional `document_ids`),
+   then drop hits scoring below `RETRIEVAL_SCORE_THRESHOLD`.
+2. **No evidence → no model call.** If nothing is left, the answer is the fixed sentence "I
+   couldn't find this in your documents." (`grounded: false`, no sources). This is the main
+   defence against invented answers, and it costs nothing against a rate-limited free tier.
+3. **Budget:** passages are numbered 1…n in rank order and kept while they fit in
+   `MAX_CONTEXT_CHARS` (the best one is always kept, cut if needed). Only the last
+   `CHAT_HISTORY_MAX_MESSAGES` user/assistant turns are sent, with old `[n]` markers removed so
+   the model cannot confuse them with this question's numbering.
+4. **Prompt:** the system message holds only our rules (answer only from the passages; cite
+   `[n]`; reply with the exact not-found sentence otherwise; passages are untrusted data, never
+   instructions; don't reveal the rules). The passages go in the *user* message inside
+   `<documents><passage number file page>…</passage></documents>`. Opening or closing tags of
+   those two kinds inside document text are neutralised and filenames are sanitised, so a
+   document cannot close the data block and speak as the prompt.
+5. **Generate** through `LLMProvider.complete`. The one adapter speaks the OpenAI chat protocol
+   (Gemini's compatible endpoint by default). Rate limits, timeouts and 5xx become
+   `LLMUnavailableError`; rejected requests (bad key, unknown model) become `LLMError`; an empty
+   answer (a reasoning model that used its whole output budget thinking) is also an error. The
+   API turns all of them into a generic `503 service_unavailable`; provider text never reaches
+   the client (it stays in the server log, with the traceback, for debugging).
+6. **Parse citations:** `[n]` markers whose number was not in the prompt are removed from the
+   text, and the returned `sources` are exactly the passages the answer cites (with a 300-char
+   excerpt, filename, page and score). An answer that cites nothing is returned with
+   `grounded: false`, so a client can show it as unverified. If the model itself says it can't
+   find the answer, the response is normalised to the fixed sentence with no sources.
+
+Limits worth knowing: prompt-level defences reduce prompt injection but cannot eliminate it;
+cited passages show *where* an answer came from, not that the model read them correctly;
+the threshold is untuned (Phase 11); there is no query rewriting, so follow-ups are searched as
+typed (Phase 9); the budget counts characters, not tokens; passage text is sent to the
+configured LLM provider.
+
 ---
 
 ## 8. Security issues and planned mitigations
@@ -543,16 +580,17 @@ Defined in `.env.example` in Phase 1. Values marked *secret* are never committed
 | `EMBEDDING_QUERY_PREFIX` | BGE instruction | Prepended to search queries only |
 | `EMBEDDING_TIMEOUT_SECONDS` | see `.env.example` | OpenAI request timeout |
 | `INSTALL_LOCAL_EMBEDDINGS` | `true` | Docker build arg: include the local model in the image |
-| `LLM_PROVIDER` | `openai` \| `ollama` | LLM backend |
-| `OPENAI_API_KEY` | *secret* | OpenAI access (required when `EMBEDDING_PROVIDER=openai`) |
-| `OPENAI_CHAT_MODEL` | set in Phase 5 | Chat model |
-| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | `http://host.docker.internal:11434` / set in Phase 5 | Local LLM |
-| `LLM_TEMPERATURE` / `LLM_MAX_OUTPUT_TOKENS` | `0.1` / `1024` | Generation |
-| `CHUNK_SIZE_TOKENS` / `CHUNK_OVERLAP_TOKENS` | `800` / `150` | Chunking |
-| `RETRIEVAL_TOP_K` | `5` | Chunks per query |
-| `RETRIEVAL_SCORE_THRESHOLD` | tuned in Phase 5 | Minimum similarity |
+| `OPENAI_API_KEY` | *secret* | OpenAI embeddings (required when `EMBEDDING_PROVIDER=openai`) |
+| `LLM_API_KEY` | *secret*, empty | Language-model key; empty = `/ask` answers 503 |
+| `LLM_BASE_URL` | Gemini's OpenAI-compatible URL | Any OpenAI-compatible endpoint |
+| `LLM_MODEL` | `gemini-3.5-flash-lite` | Model name (`check_llm` lists what the key can use) |
+| `LLM_TEMPERATURE` / `LLM_MAX_OUTPUT_TOKENS` / `LLM_TIMEOUT_SECONDS` | `0.1` / `2048` / `60` | Generation (reasoning models spend output tokens on thinking) |
+| `LLM_REASONING_EFFORT` | empty | Optional `reasoning_effort` passthrough |
+| `CHUNK_SIZE_CHARS` / `CHUNK_OVERLAP_CHARS` | `1500` / `200` | Chunking |
+| `RETRIEVAL_TOP_K` | `5` | Chunks per question |
+| `RETRIEVAL_SCORE_THRESHOLD` | `0.45` | Minimum cosine similarity; untuned starting value (Phase 11) |
 | `CHAT_HISTORY_MAX_MESSAGES` | `6` | History window |
-| `MAX_CONTEXT_TOKENS` | `6000` | Context budget |
+| `MAX_CONTEXT_CHARS` | `12000` | Context budget (characters, not tokens) |
 | `HYBRID_SEARCH_ENABLED` / `RERANKER_ENABLED` | `false` | Phase 9 features |
 | `RATE_LIMIT_*` | per-route | Rate limiting |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000/api/v1` | The only variable exposed to the browser |
@@ -570,8 +608,8 @@ Defined in `.env.example` in Phase 1. Values marked *secret* are never committed
 7. Tooling inside the repo: Ruff (lint + format), mypy, pytest; ESLint, Prettier, Playwright.
 8. Day-to-day loop: `docker compose up` with source bind-mounted and hot reload for
    both API and frontend; tests run in the backend container.
-9. LLM for development: an OpenAI key in `.env`, or Ollama with a small model. All
-   automated tests run with neither.
+9. LLM for development: a free Gemini key from https://aistudio.google.com/apikey in `.env`
+   (`LLM_API_KEY`), or any other OpenAI-compatible service. All automated tests run without one.
 
 ---
 
