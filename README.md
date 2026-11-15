@@ -3,9 +3,10 @@
 Upload your own documents (PDF, TXT, Markdown, DOCX) and ask questions about them. Answers are
 generated from retrieved passages of *your* documents only and come with citations.
 
-> **Status: Phase 5 of 11 — question answering.** Accounts, login, document upload and
-> processing exist, your documents can be searched semantically, and `POST /ask` answers
-> questions with citations (needs a free Gemini key); there is no saved chat or UI yet.
+> **Status: Phase 6 of 11 — chat API.** Accounts, login, document upload and processing
+> exist, your documents can be searched semantically, and you can hold saved conversations
+> with them (answers cite their sources, optionally streamed). Answering needs a free
+> Gemini key; there is no UI yet.
 > See [docs/PROGRESS.md](docs/PROGRESS.md) for what works and
 > [docs/architecture.md](docs/architecture.md) for the design. This README grows with the project.
 
@@ -68,7 +69,27 @@ If your documents don't contain the answer you get "I couldn't find this in your
 (`grounded: false`, no sources). To follow up, send the earlier turns as `history`
 (`[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]`).
 
-`/ask` needs a language model. The default is Google Gemini, which has a free tier: create a
+To keep the conversation, use the chat API instead. Conversations and their messages (with
+sources) are stored per user; `POST .../messages` waits for the full answer, `POST .../stream`
+sends it as it is written (server-sent events: `token` events, then one `done` with the saved
+messages, or an `error`):
+
+```bash
+curl -s -X POST localhost:8000/api/v1/chat/conversations -H "Authorization: Bearer <access_token>" \
+  -H 'Content-Type: application/json' -d '{}'                              # returns the id
+curl -s -X POST localhost:8000/api/v1/chat/<id>/messages -H "Authorization: Bearer <access_token>" \
+  -H 'Content-Type: application/json' -d '{"content": "How often must I change my password?"}'
+curl -N -X POST localhost:8000/api/v1/chat/<id>/stream -H "Authorization: Bearer <access_token>" \
+  -H 'Content-Type: application/json' -d '{"content": "And who must do it?"}'   # -N: no buffering
+curl -s localhost:8000/api/v1/chat/conversations/<id>/messages -H "Authorization: Bearer <access_token>"
+curl -s localhost:8000/api/v1/analytics/overview -H "Authorization: Bearer <access_token>"
+```
+
+An exchange is saved only when the answer is complete, so a failed or interrupted answer
+leaves no half-finished history. Conversations can also be listed, renamed and deleted
+(`/chat/conversations`, `limit` / `offset` paging).
+
+`/ask` and chat need a language model. The default is Google Gemini, which has a free tier: create a
 key at https://aistudio.google.com/apikey, put it in `.env` as `LLM_API_KEY=...` (never commit
 it) and restart the stack. Without a key everything else works and `/ask` answers 503. Gemini
 renames and retires models often, so check what your key can use right now:

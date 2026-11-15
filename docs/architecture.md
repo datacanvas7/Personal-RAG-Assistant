@@ -511,6 +511,52 @@ the threshold is untuned (Phase 11); there is no query rewriting, so follow-ups 
 typed (Phase 9); the budget counts characters, not tokens; passage text is sent to the
 configured LLM provider.
 
+### 7.6 Chat as implemented (Phase 6)
+
+Routes (all under `/api/v1`, all need a bearer token; `user_id` comes only from the token):
+
+| Method and path | Purpose |
+|---|---|
+| `POST /chat/conversations` | create (`title` optional; an untitled one is named after its first question) |
+| `GET /chat/conversations?limit&offset` | newest activity first; `{items,total,limit,offset}` |
+| `GET` / `PATCH` / `DELETE /chat/conversations/{id}` | read, rename, delete (cascades to messages and sources) |
+| `GET /chat/conversations/{id}/messages?limit&offset` | history, oldest first, each assistant message with its `sources` |
+| `POST /chat/{id}/messages` | ask and wait for the whole answer → `{user_message, assistant_message, grounded}` |
+| `POST /chat/{id}/stream` | same question, answer streamed as server-sent events |
+| `GET /analytics/overview` | counts for the dashboard: documents by status, chunks, conversations, messages, answers that cite a source, and the last 7 days of activity |
+
+**Ownership** is enforced in SQL: every repository query has `WHERE user_id = :uid`, and
+`messages` / `message_sources` reference their parent through composite foreign keys
+`(parent_id, user_id)`, so a row cannot even point at another user's parent. Someone else's
+conversation is a `404 not_found`, the same answer as a conversation that does not exist.
+
+**One exchange = one transaction.** The question and the answer (plus one `message_sources` row
+per cited passage) are written together after the answer is complete. If the model fails or the
+stream breaks, nothing is saved, so history never contains a question without an answer. This
+differs from the §5.2 diagram, which saved the question first; it avoids orphaned questions and
+lets a client simply retry. The history sent to the model is the last
+`CHAT_HISTORY_MAX_MESSAGES` messages of the stored conversation, never anything the client
+supplies. Saved sources keep filename, page and score but **not** the passage text (deleting a
+document removes its content); `document_id` / `chunk_id` become null on deletion.
+
+**Streaming protocol** (`text/event-stream`, each event is `event: <name>` + `data: <json>`):
+
+- `token` — `{"text": "…"}` repeated while the model writes;
+- `done` — once, the same body as the non-streaming response (saved messages with sources). The
+  final text can differ from the concatenated tokens only by removed invented `[n]` markers;
+  clients should replace the live text with `done.assistant_message.content`;
+- `error` — `{"error": {"code", "message"}}` if the model fails after streaming began; nothing
+  is saved.
+
+Failures before the first token (unknown conversation, no model configured, model down) are
+ordinary HTTP errors (404 / 503), not a 200 with an error event: the first event is pulled
+before the response starts. Retrieval runs first and the database connection is released
+(`release_connection`) before the model is called, so a slow model never holds a pooled
+connection. Closing the connection cancels the model call.
+
+Limits: the stream is not resumable; responses carry `Cache-Control: no-cache` and
+`X-Accel-Buffering: no`, but a proxy in front must also not buffer (Nginx config is Phase 10).
+
 ---
 
 ## 8. Security issues and planned mitigations

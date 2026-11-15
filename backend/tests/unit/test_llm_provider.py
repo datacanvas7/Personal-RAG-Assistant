@@ -160,3 +160,85 @@ def test_factory_builds_a_provider_from_settings() -> None:
     assert provider is not None
     assert provider.model_id == "gemini-test"
     assert settings.llm_base_url.startswith("https://generativelanguage.googleapis.com/")
+
+
+# --- streaming -------------------------------------------------------------------------
+
+
+def _chunk(content: str | None, finish: str | None = None) -> Any:
+    delta = SimpleNamespace(content=content)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=finish)])
+
+
+class StreamingClient(FakeClient):
+    """Answers ``stream=True`` calls with an async iterator of chunks, like the SDK."""
+
+    def __init__(self, pieces: list[str | None], *, fail_after: Exception | None = None) -> None:
+        super().__init__()
+        self.pieces = pieces
+        self.fail_after = fail_after
+
+    async def _create(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        if self.error:
+            raise self.error
+        return self._chunks()
+
+    async def _chunks(self) -> Any:
+        for piece in self.pieces:
+            yield _chunk(piece)
+        if self.fail_after:
+            raise self.fail_after
+        yield _chunk(None, "stop")
+        yield SimpleNamespace(choices=[])  # a trailing usage-only chunk
+
+
+async def _collect(provider: OpenAICompatibleProvider) -> list[str]:
+    return [piece async for piece in provider.stream(MESSAGES)]
+
+
+async def test_stream_yields_the_pieces_in_order_and_asks_for_a_stream() -> None:
+    client = StreamingClient(["Every ", None, "", "ninety days [1]."])
+
+    pieces = await _collect(_provider(client))
+
+    assert pieces == ["Every ", "ninety days [1]."]
+    call = client.calls[0]
+    assert call["stream"] is True
+    assert call["model"] == "m1"
+    assert call["messages"][-1] == {"role": "user", "content": "hello"}
+    assert call["max_tokens"] == 500
+
+
+async def test_stream_failing_to_start_maps_errors_like_complete() -> None:
+    unavailable = StreamingClient(["x"])
+    unavailable.error = _status_error(openai.RateLimitError, 429)
+    rejected = StreamingClient(["x"])
+    rejected.error = _status_error(openai.AuthenticationError, 401)
+
+    with pytest.raises(LLMUnavailableError):
+        await _collect(_provider(unavailable))
+    with pytest.raises(LLMError) as raised:
+        await _collect(_provider(rejected))
+
+    assert not isinstance(raised.value, LLMUnavailableError)
+    assert "secret provider message" not in str(raised.value)
+
+
+async def test_stream_failing_midway_raises_after_the_pieces_already_delivered() -> None:
+    client = StreamingClient(
+        ["Every "],
+        fail_after=openai.APIConnectionError(request=httpx2.Request("POST", "https://x")),
+    )
+    delivered: list[str] = []
+
+    with pytest.raises(LLMUnavailableError):
+        async for piece in _provider(client).stream(MESSAGES):
+            delivered.append(piece)
+
+    assert delivered == ["Every "]
+
+
+async def test_a_stream_without_any_text_is_an_error_not_a_blank_reply() -> None:
+    with pytest.raises(LLMError, match="empty answer"):
+        await _collect(_provider(StreamingClient([None, ""])))

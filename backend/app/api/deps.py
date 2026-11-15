@@ -19,11 +19,15 @@ from app.llm.base import LLMProvider
 from app.llm.factory import get_llm_provider
 from app.models import User
 from app.rag.service import RagService
+from app.repositories.analytics import AnalyticsRepository
 from app.repositories.auth import RefreshTokenRepository, UserRepository
+from app.repositories.conversations import ConversationRepository, MessageRepository
 from app.repositories.documents import DocumentRepository
 from app.retrieval.service import SearchService
 from app.retrieval.vector_store import PgVectorStore
+from app.services.analytics import AnalyticsService
 from app.services.auth import AuthService
+from app.services.chat import ChatService
 from app.services.documents import DocumentService
 from app.services.health import HealthService
 from app.services.queue import CeleryIngestionQueue, IngestionQueue
@@ -103,6 +107,7 @@ def get_rag_service(
     search: Annotated[SearchService, Depends(get_search_service)],
     llm: LlmDep,
     settings: SettingsDep,
+    session: SessionDep,
 ) -> RagService:
     return RagService(
         searcher=search,
@@ -111,14 +116,35 @@ def get_rag_service(
         score_threshold=settings.retrieval_score_threshold,
         max_context_chars=settings.max_context_chars,
         history_max_messages=settings.chat_history_max_messages,
+        # Retrieval only reads; ending its transaction returns the connection to the pool
+        # before the slow model call (a no-op if nothing was read).
+        release_connection=session.commit,
     )
+
+
+RagServiceDep = Annotated[RagService, Depends(get_rag_service)]
+
+
+def get_chat_service(session: SessionDep, rag: RagServiceDep, settings: SettingsDep) -> ChatService:
+    return ChatService(
+        conversations=ConversationRepository(session),
+        messages=MessageRepository(session),
+        rag=rag,
+        transaction=session,
+        history_max_messages=settings.chat_history_max_messages,
+    )
+
+
+def get_analytics_service(session: SessionDep) -> AnalyticsService:
+    return AnalyticsService(store=AnalyticsRepository(session))
 
 
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
 SearchServiceDep = Annotated[SearchService, Depends(get_search_service)]
-RagServiceDep = Annotated[RagService, Depends(get_rag_service)]
+ChatServiceDep = Annotated[ChatService, Depends(get_chat_service)]
+AnalyticsServiceDep = Annotated[AnalyticsService, Depends(get_analytics_service)]
 
 
 async def get_current_user(

@@ -1,6 +1,6 @@
 """The language-model port. Application code depends on this, never on a vendor SDK."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -37,3 +37,10 @@ class LLMProvider(Protocol):
     def model_id(self) -> str: ...
 
     async def complete(self, messages: Sequence[ChatMessage]) -> LLMResult: ...
+
+    def stream(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
+        """Yield the answer in pieces as the model produces it.
+
+        Raises ``LLMError`` / ``LLMUnavailableError`` (also when the failure happens after
+        some text was already yielded) and ``LLMError`` if the model produced nothing."""
+        ...

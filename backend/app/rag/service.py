@@ -1,8 +1,13 @@
-"""The RAG use case: retrieve the caller's passages, ask the model, resolve citations."""
+"""The RAG use case: retrieve the caller's passages, ask the model, resolve citations.
+
+Two entry points share the same retrieval, prompt and citation logic: ``answer`` (one
+response) and ``stream_answer`` (text pieces as the model produces them, then the final,
+citation-checked answer).
+"""
 
 import logging
 import uuid
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -52,8 +57,34 @@ class Answer:
     sources: list[Source]
 
 
+@dataclass(frozen=True)
+class TextPiece:
+    """A fragment of the answer as it is being written. It is a preview: the final text
+    (in ``StreamFinished``) can differ because invented citation markers are removed."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class StreamFinished:
+    answer: Answer
+
+
+StreamEvent = TextPiece | StreamFinished
+
+
+@dataclass(frozen=True)
+class _Prepared:
+    messages: list[ChatMessage]
+    hits_by_number: dict[int, SearchHit]
+    offered_numbers: set[int]
+
+
 def _is_not_found(text: str) -> bool:
     return text.casefold().startswith(NOT_FOUND_ANSWER.casefold().rstrip("."))
+
+
+_NOT_FOUND = Answer(NOT_FOUND_ANSWER, grounded=False, sources=[])
 
 
 class RagService:
@@ -66,6 +97,7 @@ class RagService:
         score_threshold: float,
         max_context_chars: int,
         history_max_messages: int,
+        release_connection: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._searcher = searcher
         self._llm = llm
@@ -73,29 +105,31 @@ class RagService:
         self._threshold = score_threshold
         self._max_context_chars = max_context_chars
         self._history_max = history_max_messages
+        # Called once retrieval is done, before the (slow) model call, so the database
+        # connection goes back to the pool instead of idling for the whole generation.
+        self._release = release_connection
 
-    async def answer(
+    async def _prepare(
         self,
         *,
         user_id: uuid.UUID,
         question: str,
-        history: Sequence[ChatMessage] = (),
-        document_ids: Sequence[uuid.UUID] | None = None,
-        top_k: int | None = None,
-    ) -> Answer:
-        if self._llm is None:
-            raise ServiceUnavailableError("The language model is not configured.")
-
+        history: Sequence[ChatMessage],
+        document_ids: Sequence[uuid.UUID] | None,
+        top_k: int | None,
+    ) -> _Prepared | None:
+        """Retrieve and build the prompt. ``None`` means nothing relevant was found."""
         hits = await self._searcher.search(
             user_id=user_id,
             query=question,
             top_k=top_k or self._top_k,
             document_ids=document_ids,
         )
+        if self._release is not None:
+            await self._release()
         relevant = [hit for hit in hits if hit.score >= self._threshold]
         if not relevant:
-            # Nothing to ground an answer on: do not ask the model (it would improvise).
-            return Answer(NOT_FOUND_ANSWER, grounded=False, sources=[])
+            return None
 
         by_number = dict(enumerate(relevant, start=1))
         passages = select_within_budget(
@@ -111,24 +145,14 @@ class RagService:
             history=history,
             history_max_messages=self._history_max,
         )
+        return _Prepared(messages, by_number, {p.number for p in passages})
 
-        try:
-            result = await self._llm.complete(messages)
-        except LLMUnavailableError:
-            logger.warning("language model temporarily unavailable", exc_info=True)
-            raise ServiceUnavailableError(
-                "The language model is busy or unavailable. Try again shortly."
-            ) from None
-        except LLMError:
-            logger.exception("language model request failed")
-            raise ServiceUnavailableError(
-                "The language model could not answer right now."
-            ) from None
-
-        if _is_not_found(result.text):
-            return Answer(NOT_FOUND_ANSWER, grounded=False, sources=[])
-
-        text, cited = resolve_citations(result.text, {p.number for p in passages})
+    @staticmethod
+    def _finish(raw_text: str, prepared: _Prepared) -> Answer:
+        if _is_not_found(raw_text):
+            return _NOT_FOUND
+        text, cited = resolve_citations(raw_text, prepared.offered_numbers)
+        by_number = prepared.hits_by_number
         sources = [
             Source(
                 number=n,
@@ -142,3 +166,81 @@ class RagService:
             for n in cited
         ]
         return Answer(text, grounded=bool(sources), sources=sources)
+
+    @staticmethod
+    def _unavailable(error: LLMError) -> ServiceUnavailableError:
+        # The provider's own text stays in the server log; clients get a fixed message.
+        if isinstance(error, LLMUnavailableError):
+            logger.warning("language model temporarily unavailable", exc_info=True)
+            return ServiceUnavailableError(
+                "The language model is busy or unavailable. Try again shortly."
+            )
+        logger.exception("language model request failed")
+        return ServiceUnavailableError("The language model could not answer right now.")
+
+    async def answer(
+        self,
+        *,
+        user_id: uuid.UUID,
+        question: str,
+        history: Sequence[ChatMessage] = (),
+        document_ids: Sequence[uuid.UUID] | None = None,
+        top_k: int | None = None,
+    ) -> Answer:
+        if self._llm is None:
+            raise ServiceUnavailableError("The language model is not configured.")
+
+        prepared = await self._prepare(
+            user_id=user_id,
+            question=question,
+            history=history,
+            document_ids=document_ids,
+            top_k=top_k,
+        )
+        if prepared is None:
+            # Nothing to ground an answer on: do not ask the model (it would improvise).
+            return _NOT_FOUND
+
+        try:
+            result = await self._llm.complete(prepared.messages)
+        except LLMError as error:
+            raise self._unavailable(error) from None
+        return self._finish(result.text, prepared)
+
+    async def stream_answer(
+        self,
+        *,
+        user_id: uuid.UUID,
+        question: str,
+        history: Sequence[ChatMessage] = (),
+        document_ids: Sequence[uuid.UUID] | None = None,
+        top_k: int | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Yield ``TextPiece`` events, then exactly one ``StreamFinished``.
+
+        When nothing relevant is found the model is not called: the not-found sentence is
+        yielded as a single piece. Errors raise ``ServiceUnavailableError``, possibly after
+        some pieces were yielded."""
+        if self._llm is None:
+            raise ServiceUnavailableError("The language model is not configured.")
+
+        prepared = await self._prepare(
+            user_id=user_id,
+            question=question,
+            history=history,
+            document_ids=document_ids,
+            top_k=top_k,
+        )
+        if prepared is None:
+            yield TextPiece(NOT_FOUND_ANSWER)
+            yield StreamFinished(_NOT_FOUND)
+            return
+
+        pieces: list[str] = []
+        try:
+            async for piece in self._llm.stream(prepared.messages):
+                pieces.append(piece)
+                yield TextPiece(piece)
+        except LLMError as error:
+            raise self._unavailable(error) from None
+        yield StreamFinished(self._finish("".join(pieces).strip(), prepared))

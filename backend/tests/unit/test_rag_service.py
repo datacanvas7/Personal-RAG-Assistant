@@ -8,7 +8,7 @@ import pytest
 from app.core.errors import ServiceUnavailableError
 from app.llm.base import ChatMessage, LLMError, LLMUnavailableError
 from app.rag.prompt_builder import NOT_FOUND_ANSWER
-from app.rag.service import RagService
+from app.rag.service import Answer, RagService, StreamFinished, TextPiece
 from app.schemas.search import SearchHit
 from tests.fakes import FakeLLM
 
@@ -237,3 +237,129 @@ async def test_prompt_injection_text_stays_in_the_data_block() -> None:
     assert attack not in sent[0].content  # never in the system message
     assert sent[-1].content.count("</documents>") == 1  # could not close the block
     assert answer.grounded is True
+
+
+# --- streaming -------------------------------------------------------------------------
+
+
+async def _stream(service: RagService, **options: object) -> list[object]:
+    return [
+        event
+        async for event in service.stream_answer(
+            user_id=USER,
+            question="How often?",
+            **options,  # type: ignore[arg-type]
+        )
+    ]
+
+
+async def test_stream_yields_text_pieces_then_the_final_checked_answer() -> None:
+    hits = [_hit("Change it every ninety days.", 0.9), _hit("Lunch is at noon.", 0.7)]
+    service, _ = _service(hits, FakeLLM("Every ninety days [1]."))
+
+    events = await _stream(service)
+
+    assert [e.text for e in events[:-1] if isinstance(e, TextPiece)] == [
+        "Every ",
+        "ninety ",
+        "days ",
+        "[1].",
+    ]
+    final = events[-1]
+    assert isinstance(final, StreamFinished)
+    assert final.answer.text == "Every ninety days [1]."
+    assert final.answer.grounded is True
+    assert [s.number for s in final.answer.sources] == [1]
+    assert final.answer.sources[0].filename == "policy.pdf"
+
+
+async def test_stream_final_answer_drops_invented_citations_that_the_pieces_contained() -> None:
+    service, _ = _service(
+        [_hit("Change it every ninety days.", 0.9)], FakeLLM("Yearly [4] or [1].")
+    )
+
+    events = await _stream(service)
+
+    assert any(isinstance(e, TextPiece) and "[4]" in e.text for e in events)
+    final = events[-1]
+    assert isinstance(final, StreamFinished)
+    assert "[4]" not in final.answer.text
+    assert [s.number for s in final.answer.sources] == [1]
+
+
+async def test_stream_without_relevant_passages_does_not_call_the_model() -> None:
+    llm = FakeLLM()
+    service, _ = _service([_hit("Lunch is at noon.", 0.2)], llm)
+
+    events = await _stream(service)
+
+    assert events == [
+        TextPiece(NOT_FOUND_ANSWER),
+        StreamFinished(Answer(NOT_FOUND_ANSWER, False, [])),
+    ]
+    assert llm.calls == []
+
+
+async def test_stream_where_the_model_says_not_found_ends_ungrounded_without_sources() -> None:
+    service, _ = _service(
+        [_hit("Change it every ninety days.", 0.9)], FakeLLM(f"{NOT_FOUND_ANSWER} Sorry.")
+    )
+
+    final = (await _stream(service))[-1]
+
+    assert isinstance(final, StreamFinished)
+    assert final.answer == Answer(NOT_FOUND_ANSWER, grounded=False, sources=[])
+
+
+async def test_stream_model_failures_become_service_unavailable_without_provider_text() -> None:
+    hits = [_hit("Change it every ninety days.", 0.9)]
+    for error, expected in [
+        (LLMUnavailableError("429 secret"), "busy or unavailable"),
+        (LLMError("401 secret"), "could not answer"),
+    ]:
+        service, _ = _service(hits, FakeLLM(error))
+
+        with pytest.raises(ServiceUnavailableError, match=expected) as raised:
+            await _stream(service)
+
+        assert "secret" not in str(raised.value)
+
+
+async def test_stream_failing_midway_raises_after_the_first_pieces() -> None:
+    llm = FakeLLM("Every ninety days [1].")
+    llm.fail_after_first_piece = LLMUnavailableError("reset")
+    service, _ = _service([_hit("Change it every ninety days.", 0.9)], llm)
+    seen: list[object] = []
+
+    with pytest.raises(ServiceUnavailableError):
+        async for event in service.stream_answer(user_id=USER, question="How often?"):
+            seen.append(event)
+
+    assert seen == [TextPiece("Every ")]
+
+
+async def test_stream_without_a_model_is_service_unavailable_before_any_event() -> None:
+    service, searcher = _service([_hit("x", 0.9)], None)
+
+    with pytest.raises(ServiceUnavailableError):
+        await _stream(service)
+
+    assert searcher.calls == []
+
+
+async def test_the_connection_is_released_after_retrieval_and_before_the_model_runs() -> None:
+    order: list[str] = []
+    llm = FakeLLM("Every ninety days [1].")
+    llm.on_call = lambda: order.append("model")
+
+    async def release() -> None:
+        order.append("release")
+
+    service, _ = _service(
+        [_hit("Change it every ninety days.", 0.9)], llm, release_connection=release
+    )
+
+    await _stream(service)
+    await service.answer(user_id=USER, question="How often?")
+
+    assert order == ["release", "model", "release", "model"]

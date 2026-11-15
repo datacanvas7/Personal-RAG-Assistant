@@ -8,15 +8,23 @@ import hashlib
 import math
 import re
 import uuid
-from collections.abc import Sequence
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator, Callable, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 
 from app.ingestion.chunking import Chunk
 from app.llm.base import ChatMessage, LLMResult
-from app.models import Document, DocumentStatus, RefreshToken, User
+from app.models import (
+    Conversation,
+    Document,
+    DocumentStatus,
+    Message,
+    MessageSource,
+    RefreshToken,
+    User,
+)
 from app.repositories.documents import ClaimedDocument
 
 
@@ -258,6 +266,100 @@ class Clock:
         return self.current
 
 
+class FakeChatStore:
+    """In-memory conversations, messages and citations (both store interfaces in one).
+
+    Like the SQL repositories, every lookup is filtered by ``user_id``; deleting a
+    conversation removes its messages (the database does it through ON DELETE CASCADE)."""
+
+    def __init__(self) -> None:
+        self.conversations: dict[uuid.UUID, Conversation] = {}
+        self.messages: list[Message] = []
+        self.sources: list[MessageSource] = []
+        self._last_stamp = datetime.now(UTC)
+
+    def _stamp(self, at: datetime | None = None) -> datetime:
+        # Strictly increasing, so ordering never depends on the resolution of the OS clock.
+        self._last_stamp = max(
+            at or datetime.now(UTC), self._last_stamp + timedelta(microseconds=1)
+        )
+        return self._last_stamp
+
+    # --- conversations ---
+
+    async def add(self, conversation: Conversation) -> Conversation:
+        conversation.id = conversation.id or uuid.uuid4()
+        conversation.created_at = conversation.updated_at = self._stamp()
+        self.conversations[conversation.id] = conversation
+        return conversation
+
+    async def get(self, user_id: uuid.UUID, conversation_id: uuid.UUID) -> Conversation | None:
+        found = self.conversations.get(conversation_id)
+        return found if found and found.user_id == user_id else None
+
+    async def list_for_user(
+        self, user_id: uuid.UUID, *, limit: int, offset: int
+    ) -> list[Conversation]:
+        mine = [c for c in self.conversations.values() if c.user_id == user_id]
+        mine.sort(key=lambda c: c.updated_at, reverse=True)
+        return mine[offset : offset + limit]
+
+    async def count_for_user(self, user_id: uuid.UUID) -> int:
+        return sum(1 for c in self.conversations.values() if c.user_id == user_id)
+
+    async def touch(
+        self, conversation: Conversation, *, at: datetime, title: str | None = None
+    ) -> Conversation:
+        if title is not None:
+            conversation.title = title
+        conversation.updated_at = self._stamp(at)
+        return conversation
+
+    async def delete(self, conversation: Conversation) -> None:
+        del self.conversations[conversation.id]
+        gone = {m.id for m in self.messages if m.conversation_id == conversation.id}
+        self.messages = [m for m in self.messages if m.id not in gone]
+        self.sources = [s for s in self.sources if s.message_id not in gone]
+
+    # --- messages ---
+
+    async def add_all(self, messages: Sequence[Message], sources: Sequence[MessageSource]) -> None:
+        if any(m.conversation_id not in self.conversations for m in messages):
+            raise IntegrityError("insert", {}, Exception("fk_messages_conversation_id"))
+        self.messages.extend(messages)
+        self.sources.extend(sources)
+
+    def _in(self, user_id: uuid.UUID, conversation_id: uuid.UUID) -> list[Message]:
+        found = [
+            m
+            for m in self.messages
+            if m.user_id == user_id and m.conversation_id == conversation_id
+        ]
+        return sorted(found, key=lambda m: m.created_at)
+
+    async def list_for_conversation(
+        self, user_id: uuid.UUID, conversation_id: uuid.UUID, *, limit: int, offset: int
+    ) -> list[Message]:
+        return self._in(user_id, conversation_id)[offset : offset + limit]
+
+    async def count_for_conversation(self, user_id: uuid.UUID, conversation_id: uuid.UUID) -> int:
+        return len(self._in(user_id, conversation_id))
+
+    async def recent(
+        self, user_id: uuid.UUID, conversation_id: uuid.UUID, *, limit: int
+    ) -> list[Message]:
+        return self._in(user_id, conversation_id)[-limit:]
+
+    async def sources_for(
+        self, user_id: uuid.UUID, message_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, list[MessageSource]]:
+        grouped: dict[uuid.UUID, list[MessageSource]] = {}
+        for source in sorted(self.sources, key=lambda s: s.position):
+            if source.user_id == user_id and source.message_id in message_ids:
+                grouped.setdefault(source.message_id, []).append(source)
+        return grouped
+
+
 class FakeLLM:
     """Scripted language model: returns the queued reply (or raises it) and records the prompt."""
 
@@ -266,10 +368,26 @@ class FakeLLM:
     def __init__(self, *replies: str | Exception) -> None:
         self.replies: list[str | Exception] = list(replies)
         self.calls: list[list[ChatMessage]] = []
+        # For streaming tests: raise this after the first piece was delivered.
+        self.fail_after_first_piece: Exception | None = None
+        # Called when the model is asked something (tests use it to look at the world then).
+        self.on_call: Callable[[], None] | None = None
 
-    async def complete(self, messages: Sequence[ChatMessage]) -> LLMResult:
+    def _next_reply(self, messages: Sequence[ChatMessage]) -> str:
+        if self.on_call is not None:
+            self.on_call()
         self.calls.append(list(messages))
         reply = self.replies.pop(0) if self.replies else "Fine. [1]"
         if isinstance(reply, Exception):
             raise reply
-        return LLMResult(text=reply, prompt_tokens=10, completion_tokens=5)
+        return reply
+
+    async def complete(self, messages: Sequence[ChatMessage]) -> LLMResult:
+        return LLMResult(text=self._next_reply(messages), prompt_tokens=10, completion_tokens=5)
+
+    async def stream(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
+        reply = self._next_reply(messages)
+        for index, piece in enumerate(re.findall(r"\S+\s*", reply)):
+            yield piece
+            if index == 0 and self.fail_after_first_piece is not None:
+                raise self.fail_after_first_piece

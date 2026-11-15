@@ -6,7 +6,7 @@ switching is a change of ``LLM_BASE_URL`` / ``LLM_MODEL`` / ``LLM_API_KEY``, not
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import openai
@@ -14,6 +14,23 @@ import openai
 from app.llm.base import ChatMessage, LLMError, LLMResult, LLMUnavailableError
 
 logger = logging.getLogger(__name__)
+
+
+def _translate(error: openai.OpenAIError) -> LLMError:
+    """Map a vendor exception to ours. The text never contains the vendor's message."""
+    if isinstance(
+        error,
+        openai.APIConnectionError  # includes timeouts
+        | openai.RateLimitError
+        | openai.InternalServerError,
+    ):
+        return LLMUnavailableError(
+            f"language model temporarily unavailable ({type(error).__name__})"
+        )
+    if isinstance(error, openai.APIStatusError):
+        # 400/401/403/404: a bad key, an unknown model, a rejected request.
+        return LLMError(f"language model rejected the request (HTTP {error.status_code})")
+    return LLMError(f"language model call failed ({type(error).__name__})")
 
 
 class OpenAICompatibleProvider:
@@ -43,32 +60,23 @@ class OpenAICompatibleProvider:
     def model_id(self) -> str:
         return self._model
 
-    async def complete(self, messages: Sequence[ChatMessage]) -> LLMResult:
-        options: dict[str, Any] = {}
+    def _request(self, messages: Sequence[ChatMessage]) -> dict[str, Any]:
         payload: list[Any] = [{"role": m.role, "content": m.content} for m in messages]
+        request: dict[str, Any] = {
+            "model": self._model,
+            "messages": payload,
+            "temperature": self._temperature,
+            "max_tokens": self._max_output_tokens,
+        }
         if self._reasoning_effort:
-            options["reasoning_effort"] = self._reasoning_effort
+            request["reasoning_effort"] = self._reasoning_effort
+        return request
+
+    async def complete(self, messages: Sequence[ChatMessage]) -> LLMResult:
         try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=payload,
-                temperature=self._temperature,
-                max_tokens=self._max_output_tokens,
-                **options,
-            )
-        except (
-            openai.APIConnectionError,  # includes timeouts
-            openai.RateLimitError,
-            openai.InternalServerError,
-        ) as error:
-            raise LLMUnavailableError(
-                f"language model temporarily unavailable ({type(error).__name__})"
-            ) from error
-        except openai.APIStatusError as error:
-            # 400/401/403/404: a bad key, an unknown model, a rejected request.
-            raise LLMError(
-                f"language model rejected the request (HTTP {error.status_code})"
-            ) from error
+            response = await self._client.chat.completions.create(**self._request(messages))
+        except openai.OpenAIError as error:
+            raise _translate(error) from error
 
         if not response.choices:
             raise LLMError("language model returned no choices")
@@ -86,3 +94,26 @@ class OpenAICompatibleProvider:
             prompt_tokens=usage.prompt_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
         )
+
+    async def stream(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
+        produced = False
+        finish_reason: str | None = None
+        try:
+            response = await self._client.chat.completions.create(
+                **self._request(messages), stream=True
+            )
+            async for chunk in response:
+                if not chunk.choices:
+                    continue  # e.g. a trailing usage-only chunk
+                choice = chunk.choices[0]
+                finish_reason = choice.finish_reason or finish_reason
+                piece = choice.delta.content
+                if piece:
+                    produced = True
+                    yield piece
+        except openai.OpenAIError as error:
+            # Also reached when the connection drops after some text was already sent.
+            raise _translate(error) from error
+
+        if not produced:
+            raise LLMError(f"language model returned an empty answer (finish={finish_reason})")

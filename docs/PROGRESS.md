@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 5 — verified in CI; one manual step open (real Gemini run with your key)** (2026-11-15)
+Current phase: **Phase 6 — implemented and verified locally, not yet pushed (CI pending); a real Gemini run with your key is still open from Phase 5** (2026-11-15)
 
 ---
 
@@ -163,14 +163,27 @@ prompt-level defences; those reduce but cannot eliminate the risk.
 
 ## Phase 6 — Chat API
 
-- [ ] Conversation CRUD
-- [ ] Message persistence with sources
-- [ ] Non-streaming chat endpoint
-- [ ] SSE streaming endpoint
-- [ ] Analytics overview endpoint
-- [ ] Pagination and consistent error schema
-- [ ] Tests: chat APIs, streaming, ownership checks
-- **Exit:** API test suite passes; streaming verified with `curl`.
+Status: **implemented and verified locally (2026-11-15): 281 unit + 57 integration tests passed
+(1 skipped: the pgvector 0.8 test, which only runs in CI); ruff, format and mypy clean. Not yet
+pushed, so CI has not run.** Streaming was checked with `curl -N` against the real routers and
+SSE code with a deliberately slow scripted model (tokens arrived about 0.5 s apart, then one
+`done`). **Streaming from the real Gemini API is not verified** — that needs your key, like the
+open Phase 5 step.
+
+- [x] Conversation CRUD: create (title optional), list (`limit`/`offset`, newest activity first, `total`), get, rename, delete (cascades to messages and sources)
+- [x] Message persistence with sources: question, answer and one `message_sources` row per cited passage are saved in one transaction; a failed or interrupted answer saves nothing
+- [x] Non-streaming chat endpoint `POST /chat/{id}/messages` (history comes from the stored conversation, never from the client)
+- [x] SSE streaming endpoint `POST /chat/{id}/stream`: `token` events, one `done` (same body as the non-streaming response), or `error`; failures before the first token are normal HTTP errors; no database connection is held while the model writes
+- [x] Analytics overview `GET /analytics/overview` (documents by status, chunks, conversations, messages, cited answers, last 7 days)
+- [x] Pagination and consistent error schema (`{"error": {"code", "message"}}` everywhere, including the SSE `error` event)
+- [x] Tests: ownership of every chat route (cross-user 404, rows untouched, model not called), streaming protocol and failure modes, provider streaming (SDK mocked), RAG streaming, and against real PostgreSQL: paging, one-transaction save, cascade delete, document deletion unlinks sources, analytics counts per user
+- **Exit:** API test suite passes — met locally; streaming verified with `curl` — met against a scripted model (real model: **open**).
+
+Deviations from the plan: the question is saved together with the answer, not before it
+(architecture §7.6), so history never holds a question without an answer. Saved sources keep
+filename, page and score but not the passage text (deleting a document removes its content), so
+a reloaded conversation shows no excerpts. Streaming is not resumable. Titles are the first
+question (cut to 200 characters), not model-generated. There is still no rate limit (Phase 10).
 
 ## Phase 7 — Frontend Foundation
 
