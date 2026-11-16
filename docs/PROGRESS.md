@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 6 — implemented and verified locally, CI re-run pending; a real Gemini run with your key is still open from Phase 5** (2026-11-15)
+Current phase: **Phase 6 — verified in CI; a real Gemini run with your key is still open from Phase 5** (2026-11-15)
 
 ---
 
@@ -163,9 +163,9 @@ prompt-level defences; those reduce but cannot eliminate the risk.
 
 ## Phase 6 — Chat API
 
-Status: **implemented and verified locally (2026-11-16): 336 unit + 57 integration tests passed
+Status: **implemented and verified in CI (commit `fa96aa7`, 2026-11-16) and locally: 336 unit + 57 integration tests passed
 (1 skipped: the pgvector 0.8 test, which only runs in CI); ruff, format and mypy clean. The first push (`05453d8`) failed CI on one wrong
-assertion in a new unit test (fixed); the re-run is pending.** Streaming was checked with `curl -N` against the real routers and
+assertion in a new unit test; after the fix, all CI jobs are green.** Streaming was checked with `curl -N` against the real routers and
 SSE code with a deliberately slow scripted model (tokens arrived about 0.5 s apart, then one
 `done`). **Streaming from the real Gemini API is not verified** — that needs your key, like the
 open Phase 5 step.
