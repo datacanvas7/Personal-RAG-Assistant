@@ -347,7 +347,7 @@ async def test_follow_up_questions_see_the_earlier_turns_but_only_a_window_of_th
     second_prompt = env.llm.calls[1]
     assert [m.role for m in second_prompt[1:-1]] == ["user", "assistant"]
     assert second_prompt[1].content == QUESTION
-    assert second_prompt[2].content == ANSWER
+    assert second_prompt[2].content == "Every ninety days."  # old [n] markers are stripped
     # Many turns later the prompt still carries at most the configured window.
     for _ in range(6):
         await _ask(env, headers, conversation_id)
