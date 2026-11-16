@@ -1,26 +1,145 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
+/* Dark mode is a class on <html>, set before first paint by the inline script in
+   app/layout.tsx and kept in sync by components/theme-provider.tsx. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------------------
+   Design tokens. Components never use raw colours: they use these semantic names, so a
+   theme is only a different set of values. Colours are OKLCH.
+   --------------------------------------------------------------------------------------- */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --radius: 0.625rem;
+
+  --background: oklch(0.985 0.002 260);
+  --foreground: oklch(0.2 0.02 265);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.02 265);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0.02 265);
+
+  /* Brand: a calm indigo. */
+  --primary: oklch(0.51 0.2 275);
+  --primary-foreground: oklch(0.985 0.005 275);
+
+  --secondary: oklch(0.955 0.01 265);
+  --secondary-foreground: oklch(0.28 0.03 265);
+  --muted: oklch(0.955 0.008 265);
+  --muted-foreground: oklch(0.48 0.02 265);
+  --accent: oklch(0.94 0.03 275);
+  --accent-foreground: oklch(0.32 0.1 275);
+
+  --destructive: oklch(0.55 0.22 27);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.52 0.14 155);
+  --warning: oklch(0.62 0.15 70);
+  --info: oklch(0.54 0.15 240);
+
+  --border: oklch(0.9 0.008 265);
+  --input: oklch(0.88 0.01 265);
+  --ring: oklch(0.51 0.2 275 / 55%);
+
+  --sidebar: oklch(0.97 0.006 265);
+}
+
+.dark {
+  --background: oklch(0.16 0.015 265);
+  --foreground: oklch(0.95 0.005 265);
+
+  --card: oklch(0.2 0.018 265);
+  --card-foreground: oklch(0.95 0.005 265);
+  --popover: oklch(0.22 0.02 265);
+  --popover-foreground: oklch(0.95 0.005 265);
+
+  --primary: oklch(0.7 0.16 275);
+  --primary-foreground: oklch(0.17 0.03 275);
+
+  --secondary: oklch(0.26 0.02 265);
+  --secondary-foreground: oklch(0.93 0.01 265);
+  --muted: oklch(0.25 0.018 265);
+  --muted-foreground: oklch(0.7 0.02 265);
+  --accent: oklch(0.3 0.05 275);
+  --accent-foreground: oklch(0.93 0.03 275);
+
+  --destructive: oklch(0.68 0.19 25);
+  --destructive-foreground: oklch(0.15 0.02 25);
+  --success: oklch(0.72 0.15 155);
+  --warning: oklch(0.8 0.14 80);
+  --info: oklch(0.74 0.12 240);
+
+  --border: oklch(1 0 0 / 11%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.7 0.16 275 / 60%);
+
+  --sidebar: oklch(0.185 0.016 265);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    @apply border-border;
   }
-}
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-geist-sans), system-ui, sans-serif;
+  }
+
+  /* One visible focus style for everything keyboard-reachable. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }

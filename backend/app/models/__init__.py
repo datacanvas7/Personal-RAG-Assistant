@@ -3,6 +3,7 @@
 from app.models.conversation import Conversation, Message, MessageRole, MessageSource
 from app.models.document import Document, DocumentChunk, DocumentStatus
 from app.models.user import RefreshToken, User
+from app.models.user_settings import Theme, UserSettings
 
 __all__ = [
     "Conversation",
@@ -13,5 +14,7 @@ __all__ = [
     "MessageRole",
     "MessageSource",
     "RefreshToken",
+    "Theme",
     "User",
+    "UserSettings",
 ]

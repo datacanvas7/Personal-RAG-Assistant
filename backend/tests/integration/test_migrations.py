@@ -16,6 +16,7 @@ EXPECTED_TABLES = {
     "conversations",
     "messages",
     "message_sources",
+    "user_settings",
 }
 
 

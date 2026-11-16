@@ -8,9 +8,11 @@ import hashlib
 import math
 import re
 import uuid
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
@@ -26,6 +28,7 @@ from app.models import (
     User,
 )
 from app.repositories.documents import ClaimedDocument
+from app.services.settings import DEFAULT_PREFERENCES, UserPreferences
 
 
 class FakeUserStore:
@@ -391,3 +394,18 @@ class FakeLLM:
             yield piece
             if index == 0 and self.fail_after_first_piece is not None:
                 raise self.fail_after_first_piece
+
+
+class FakeSettingsStore:
+    """The per-user preferences, in memory (the upsert only touches the given fields)."""
+
+    def __init__(self) -> None:
+        self.rows: dict[uuid.UUID, UserPreferences] = {}
+
+    async def get(self, user_id: uuid.UUID) -> UserPreferences | None:
+        return self.rows.get(user_id)
+
+    async def upsert(self, user_id: uuid.UUID, values: Mapping[str, Any]) -> UserPreferences:
+        current = self.rows.get(user_id) or DEFAULT_PREFERENCES
+        self.rows[user_id] = replace(current, **values)
+        return self.rows[user_id]

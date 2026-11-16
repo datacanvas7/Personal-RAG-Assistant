@@ -23,6 +23,7 @@ from app.repositories.analytics import AnalyticsRepository
 from app.repositories.auth import RefreshTokenRepository, UserRepository
 from app.repositories.conversations import ConversationRepository, MessageRepository
 from app.repositories.documents import DocumentRepository
+from app.repositories.user_settings import UserSettingsRepository
 from app.retrieval.service import SearchService
 from app.retrieval.vector_store import PgVectorStore
 from app.services.analytics import AnalyticsService
@@ -31,6 +32,7 @@ from app.services.chat import ChatService
 from app.services.documents import DocumentService
 from app.services.health import HealthService
 from app.services.queue import CeleryIngestionQueue, IngestionQueue
+from app.services.settings import SettingsService
 from app.services.storage import FileStorage, LocalFileStorage
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -52,6 +54,23 @@ def get_auth_service(session: SessionDep, settings: SettingsDep) -> AuthService:
         transaction=session,
         settings=settings,
     )
+
+
+AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+
+
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    auth: AuthServiceDep,
+) -> User:
+    """Every protected endpoint depends on this. The user id used for data access comes
+    from here (the verified token) and never from the request body or URL."""
+    if credentials is None:
+        raise AuthenticationError()
+    return await auth.authenticate(access_token=credentials.credentials)
+
+
+CurrentUserDep = Annotated[User, Depends(get_current_user)]
 
 
 def get_file_storage(settings: SettingsDep) -> FileStorage:
@@ -103,17 +122,30 @@ def get_llm() -> LLMProvider | None:
 LlmDep = Annotated[LLMProvider | None, Depends(get_llm)]
 
 
-def get_rag_service(
+def get_settings_service(session: SessionDep, settings: SettingsDep) -> SettingsService:
+    return SettingsService(
+        store=UserSettingsRepository(session), transaction=session, settings=settings
+    )
+
+
+SettingsServiceDep = Annotated[SettingsService, Depends(get_settings_service)]
+
+
+async def get_rag_service(
     search: Annotated[SearchService, Depends(get_search_service)],
     llm: LlmDep,
     settings: SettingsDep,
     session: SessionDep,
+    user: CurrentUserDep,
+    user_settings: SettingsServiceDep,
 ) -> RagService:
+    # The caller's own retrieval preferences (or the server's defaults).
+    retrieval = await user_settings.retrieval(user_id=user.id)
     return RagService(
         searcher=search,
         llm=llm,
-        top_k=settings.retrieval_top_k,
-        score_threshold=settings.retrieval_score_threshold,
+        top_k=retrieval.top_k,
+        score_threshold=retrieval.score_threshold,
         max_context_chars=settings.max_context_chars,
         history_max_messages=settings.chat_history_max_messages,
         # Retrieval only reads; ending its transaction returns the connection to the pool
@@ -140,22 +172,7 @@ def get_analytics_service(session: SessionDep) -> AnalyticsService:
 
 
 HealthServiceDep = Annotated[HealthService, Depends(get_health_service)]
-AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
 SearchServiceDep = Annotated[SearchService, Depends(get_search_service)]
 ChatServiceDep = Annotated[ChatService, Depends(get_chat_service)]
 AnalyticsServiceDep = Annotated[AnalyticsService, Depends(get_analytics_service)]
-
-
-async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-    auth: AuthServiceDep,
-) -> User:
-    """Every protected endpoint depends on this. The user id used for data access comes
-    from here (the verified token) and never from the request body or URL."""
-    if credentials is None:
-        raise AuthenticationError()
-    return await auth.authenticate(access_token=credentials.credentials)
-
-
-CurrentUserDep = Annotated[User, Depends(get_current_user)]

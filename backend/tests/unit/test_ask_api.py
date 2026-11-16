@@ -10,17 +10,25 @@ from dataclasses import dataclass
 import httpx2
 import pytest
 
-from app.api.deps import get_auth_service, get_embedder, get_llm, get_search_service
+from app.api.deps import (
+    get_auth_service,
+    get_embedder,
+    get_llm,
+    get_search_service,
+    get_settings_service,
+)
 from app.core.config import Settings
 from app.llm.base import LLMError, LLMUnavailableError
 from app.main import create_app
 from app.rag.prompt_builder import NOT_FOUND_ANSWER
 from app.retrieval.service import SearchService
 from app.services.auth import AuthService
+from app.services.settings import SettingsService, UserPreferences
 from tests.fakes import (
     FakeDocumentStore,
     FakeEmbedder,
     FakeLLM,
+    FakeSettingsStore,
     FakeTokenStore,
     FakeTransaction,
     FakeUserStore,
@@ -34,6 +42,7 @@ URL = "/api/v1/ask"
 @dataclass
 class AskEnv(SearchEnv):
     llm: FakeLLM
+    preferences: FakeSettingsStore
 
 
 @pytest.fixture
@@ -43,6 +52,7 @@ async def env() -> AsyncIterator[AskEnv]:
     documents, embedder = FakeDocumentStore(), FakeEmbedder()
     vectors = InMemoryVectorStore(embedder)
     llm = FakeLLM()
+    preferences = FakeSettingsStore()
     app = create_app()
     app.dependency_overrides[get_auth_service] = lambda: AuthService(
         users=users, tokens=tokens, transaction=FakeTransaction(), settings=settings
@@ -52,9 +62,12 @@ async def env() -> AsyncIterator[AskEnv]:
         embedder=embedder, vectors=vectors, documents=documents
     )
     app.dependency_overrides[get_llm] = lambda: llm
+    app.dependency_overrides[get_settings_service] = lambda: SettingsService(
+        store=preferences, transaction=FakeTransaction(), settings=settings
+    )
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield AskEnv(client, users, documents, vectors, embedder, llm)
+        yield AskEnv(client, users, documents, vectors, embedder, llm, preferences)
 
 
 async def test_ask_requires_authentication(env: AskEnv) -> None:
@@ -211,3 +224,18 @@ async def test_without_a_configured_model_ask_is_a_503_and_the_rest_works(
 
     assert response.status_code == 503
     assert "not configured" in response.json()["error"]["message"]
+
+
+async def test_the_users_saved_threshold_decides_what_counts_as_relevant(env: AskEnv) -> None:
+    headers, user_id = await _login(env, "ada@example.com")
+    _document(env, user_id, "handbook.txt", ["Passwords must be reset every ninety days."])
+    env.llm.replies.append("Every ninety days [1].")
+    question = {"question": "How often must passwords be reset?"}
+    assert (await env.client.post(URL, headers=headers, json=question)).json()["grounded"]
+
+    # An unreachably strict threshold of their own: the same passage no longer qualifies.
+    env.preferences.rows[user_id] = UserPreferences("system", None, 0.99)
+    response = await env.client.post(URL, headers=headers, json=question)
+
+    assert response.json()["answer"] == NOT_FOUND_ANSWER
+    assert len(env.llm.calls) == 1  # only the first question reached the model

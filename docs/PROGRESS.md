@@ -187,15 +187,37 @@ question (cut to 200 characters), not model-generated. There is still no rate li
 
 ## Phase 7 — Frontend Foundation
 
-- [ ] Design tokens, light/dark themes, app shell
-- [ ] Landing page
-- [ ] Login and registration (React Hook Form + Zod)
-- [ ] API client with token refresh; TanStack Query setup
-- [ ] Dashboard
-- [ ] Document library (drag-and-drop, progress, status polling, search, delete)
-- [ ] Settings page and `user_settings` API
-- [ ] Responsive layouts
-- **Exit:** register → upload → see processing complete, on desktop and mobile widths.
+Status: **implemented and checked locally; not yet committed, so not yet verified in CI.**
+Frontend: `tsc`, ESLint and `next build` clean, 38 Vitest tests pass. The UI was driven in a real
+browser against the real FastAPI app and PostgreSQL + pgvector (Celery/Redis and the embedding
+model were replaced by a thread and the test embedder, so no Docker stack was involved).
+
+- [x] Design tokens (OKLCH), light/dark/system themes with no first-paint flash, app shell (sidebar on desktop, bottom tabs on mobile)
+- [x] Landing page
+- [x] Login and registration (React Hook Form + Zod; a 409 shows on the email field) — register → auto-login → dashboard checked in the browser
+- [x] API client: in-memory access token, single-flight refresh, one 401→refresh→retry, session restore from the refresh cookie after a full reload (checked); TanStack Query
+- [x] Dashboard (analytics overview)
+- [x] Document library: drag-and-drop/choose, upload progress, status polling (queued → ready without a refresh, checked), search, status filter, retry, delete with confirmation
+- [x] Settings page and `user_settings` API (`GET/PATCH /settings`, migration 0004): retrieval values and theme saved to the account, survive a reload, reset to defaults (all checked)
+- [x] Responsive layouts: 375 px width has no horizontal overflow; an upload completed there
+- [x] Tests: API client (refresh, retry, 204, network errors), validation schemas, document filtering, polling rules
+- **Exit:** register → upload → see processing complete, on desktop and mobile widths — met locally.
+
+Bugs the browser run found and fixed: Next truncated proxied request bodies at 10 MB, so uploads
+between 10 and 25 MB failed (`experimental.proxyClientMaxBodySize` is now 30 MB, just above the
+API's 25 MiB limit); the client-side fallback upload limit said 10 MB (now 25 MB, replaced by the
+server's real value once `/settings` loads); the delete dialog lost the file name while fading out.
+
+Not yet done or verified: **logout** was not exercised in the browser (it is covered only by the
+code path and the client tests); the full backend suite has not been rerun since `deps.py` changed
+(baseline 336 unit + 57 integration); CI has not run on Phase 7; nothing was run in Docker.
+
+Deviations from the plan: the documents API has no search parameter, so search and the status
+filter work on the newest 100 documents already loaded (the page says so when there are more);
+server-side search is a later change. Theme is stored in `localStorage` for instant paint and in
+the account so it follows the user to other devices. Pages under the signed-in area render on the
+client (the token lives only in memory), so they opt out of Next's instant-navigation check
+(`instant = false` on the `(app)` layout).
 
 ## Phase 8 — Chat Interface
 

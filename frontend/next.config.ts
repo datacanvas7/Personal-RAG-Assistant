@@ -11,6 +11,12 @@ const nextConfig: NextConfig = {
   output: "standalone",
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    // Proxied request bodies are cut off at 10 MB by default, which silently breaks uploads
+    // between 10 and 25 MB (the API's MAX_UPLOAD_BYTES). Allow a little more than the API's
+    // limit so oversized files reach FastAPI and get its clear 413 instead of a dropped socket.
+    proxyClientMaxBodySize: "30mb",
+  },
   turbopack: {
     rules: {
       "*.css": {
