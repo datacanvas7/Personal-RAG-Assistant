@@ -125,8 +125,8 @@ embedding providers.
 | `DocumentLoader` | `load(path) -> list[PageText]` | PDF (PyMuPDF), DOCX, TXT, Markdown |
 | `EmbeddingProvider` | `embed_documents`, `embed_query`, `dimension`, `model_name` | SentenceTransformers (BGE-small), OpenAI |
 | `VectorStore` | `insert`, `delete_by_document`, `search(user_id, …)` | pgvector via SQLAlchemy |
-| `Retriever` | `retrieve(user_id, query, filters) -> list[RetrievedChunk]` | Semantic; Hybrid (Phase 9) |
-| `Reranker` | `rerank(query, chunks)` | No-op; cross-encoder (Phase 9) |
+| `VectorStore` / `KeywordStore` | `search(user_id, …, document_ids, content_types, page_from, page_to)` | pgvector (cosine, HNSW); PostgreSQL full-text (`tsvector` + GIN). `SearchService` fuses them (RRF) |
+| `Reranker` | `rerank(query, chunks)` | `LexicalReranker` (opt-in, `RETRIEVAL_RERANK`); a cross-encoder plugs in here |
 | `LLMProvider` | `complete` (`stream` arrives with Phase 6) | One OpenAI-compatible adapter: Gemini, OpenAI, Groq, OpenRouter, Ollama |
 | `StorageBackend` | `save`, `open`, `delete` | Local volume (S3-compatible later) |
 
@@ -266,7 +266,8 @@ personal-rag-assistant/
 │   │   ├── storage/           (+)  StorageBackend + local implementation
 │   │   ├── ingestion/              loaders/, cleaning, chunking, pipeline
 │   │   ├── embeddings/             base, sentence_transformers, openai, factory
-│   │   ├── retrieval/              vector_store, retriever, hybrid, rerank
+│   │   ├── retrieval/              vector_store, keyword_store, filters, fusion (RRF), reranker, service
+│   │   ├── evaluation/             dataset, metrics, runner, report (python -m app.scripts.evaluate)
 │   │   ├── llm/                    base, openai_compatible, factory
 │   │   ├── rag/                    prompt_builder, citations, service
 │   │   ├── workers/                celery_app, tasks
@@ -474,6 +475,31 @@ documents to `pending`, erases their vectors in the same transaction, queues the
 the worker finish. Limits: the worker does not run the guard, and a changed
 `EMBEDDING_DIMENSION` also needs a migration of the column type.
 
+### 7.4a Retrieval as implemented (Phase 9)
+
+`SearchService.search` embeds the query once, then, depending on `RETRIEVAL_MODE`:
+
+* **vector**: nearest chunks by cosine similarity (pgvector, HNSW);
+* **keyword**: chunks matching the query's words with PostgreSQL full-text search. The query
+  goes through `websearch_to_tsquery` (so arbitrary user text can never be a syntax error or
+  an injection) and its `&` is turned into `|`, so a chunk matches when it has *some* of the
+  words and `ts_rank_cd` ranks the ones with more of them first;
+* **hybrid** (default): both, merged with Reciprocal Rank Fusion (`1 / (60 + rank)` summed per
+  chunk). RRF needs no score normalisation, which matters because cosine similarity and
+  `ts_rank` are on unrelated scales.
+
+Fusion (and the optional reranker) work on a wider pool (`top_k x RETRIEVAL_CANDIDATE_MULTIPLIER`,
+at most 200) and the best `top_k` are returned. `score` on every hit stays the cosine
+similarity, so `RETRIEVAL_SCORE_THRESHOLD` keeps its meaning in every mode (a chunk found only
+by words and never embedded has score 0 and is dropped by the threshold, which is intended:
+the answer step needs evidence the model can rely on).
+
+Metadata filters (`document_ids`, `content_types`, `page_from`/`page_to`) are applied by one
+helper, `retrieval/filters.py`, used by both searches. It always adds `user_id = :uid` first;
+file types are resolved through a subquery on the *caller's own* documents.
+
+Measured behaviour and the reasons for the defaults are in `docs/evaluation.md`.
+
 ### 7.5 Answering as implemented (Phase 5)
 
 `POST /ask` (stateless; saved conversations and streaming are Phase 6) → `RagService.answer`:
@@ -589,7 +615,7 @@ Limits: the stream is not resumable; responses carry `Cache-Control: no-cache` a
 | Page provenance vs. chunk quality | Wrong page in citations, or fragmented chunks | Page-aware chunker with explicit tests on a multi-page fixture |
 | Scanned PDFs | Empty index, useless answers | Per-page text threshold → `failed: OCR required` |
 | Upload-then-enqueue is a dual write | Document stuck in `pending` if Redis is down | Enqueue after commit; on enqueue failure mark `failed` (retryable); reaper for stale `processing` |
-| Follow-up questions ("and the second one?") retrieve poorly | Weak multi-turn answers | Question-condensing step using the history window (Phase 5/9) |
+| Follow-up questions ("and the second one?") retrieve poorly | Weak multi-turn answers | Question-condensing step using the history window (`RagService._search_query`, Phase 9; falls back to the user's words on any failure) |
 | Streaming through proxies | Buffered or cut-off responses | Correct SSE headers; client abort handling; persist the message even if the client disconnects |
 | Async API + sync worker sharing code | Duplicated data access | Pipeline stages are plain synchronous functions; API calls them off the event loop where needed |
 | Local model weight (torch) | Large images, slow builds | CPU-only torch wheels; model cached in a volume; local-embedding extra is optional |

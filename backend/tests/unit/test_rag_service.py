@@ -363,3 +363,92 @@ async def test_the_connection_is_released_after_retrieval_and_before_the_model_r
     await service.answer(user_id=USER, question="How often?")
 
     assert order == ["release", "model", "release", "model"]
+
+
+# --- query condensing ------------------------------------------------------------------
+
+HISTORY = [
+    ChatMessage("user", "What is the password policy?"),
+    ChatMessage("assistant", "Change it every ninety days [1]."),
+]
+
+
+async def test_a_follow_up_is_rewritten_for_the_search_but_the_user_s_words_go_to_the_model() -> (
+    None
+):
+    llm = FakeLLM("What are the password length rules?", "Twelve characters [1].")
+    service, searcher = _service(
+        [_hit("Passwords need twelve characters.", 0.9)], llm, condense_queries=True
+    )
+
+    await service.answer(user_id=USER, question="And the length?", history=HISTORY)
+
+    assert searcher.calls[0]["query"] == "What are the password length rules?"
+    rewrite_request, answer_request = llm.calls
+    assert "And the length?" in rewrite_request[-1].content
+    assert "What is the password policy?" in rewrite_request[-1].content
+    assert answer_request[-1].content.endswith("Question: And the length?")
+
+
+async def test_no_rewrite_is_requested_when_there_is_no_history() -> None:
+    llm = FakeLLM("Twelve characters [1].")
+    service, searcher = _service([_hit("Twelve characters.", 0.9)], llm, condense_queries=True)
+
+    await service.answer(user_id=USER, question="How long must passwords be?")
+
+    assert searcher.calls[0]["query"] == "How long must passwords be?"
+    assert len(llm.calls) == 1
+
+
+async def test_no_rewrite_is_requested_when_condensing_is_off() -> None:
+    llm = FakeLLM("Twelve characters [1].")
+    service, searcher = _service([_hit("Twelve characters.", 0.9)], llm)
+
+    await service.answer(user_id=USER, question="And the length?", history=HISTORY)
+
+    assert searcher.calls[0]["query"] == "And the length?"
+    assert len(llm.calls) == 1
+
+
+async def test_a_failed_rewrite_falls_back_to_the_original_question() -> None:
+    llm = FakeLLM(LLMUnavailableError("busy"), "Twelve characters [1].")
+    service, searcher = _service(
+        [_hit("Passwords need twelve characters.", 0.9)], llm, condense_queries=True
+    )
+
+    answer = await service.answer(user_id=USER, question="And the length?", history=HISTORY)
+
+    assert searcher.calls[0]["query"] == "And the length?"
+    assert answer.grounded is True
+
+
+@pytest.mark.parametrize("reply", ["", "   ", "x" * 600])
+async def test_an_unusable_rewrite_falls_back_to_the_original_question(reply: str) -> None:
+    llm = FakeLLM(reply, "Twelve characters [1].")
+    service, searcher = _service(
+        [_hit("Passwords need twelve characters.", 0.9)], llm, condense_queries=True
+    )
+
+    await service.answer(user_id=USER, question="And the length?", history=HISTORY)
+
+    assert searcher.calls[0]["query"] == "And the length?"
+
+
+async def test_only_the_first_line_of_a_chatty_rewrite_is_used() -> None:
+    llm = FakeLLM('"What are the password length rules?"\nHope that helps!', "Twelve [1].")
+    service, searcher = _service([_hit("Twelve characters.", 0.9)], llm, condense_queries=True)
+
+    await service.answer(user_id=USER, question="And the length?", history=HISTORY)
+
+    assert searcher.calls[0]["query"] == "What are the password length rules?"
+
+
+async def test_streaming_also_rewrites_follow_ups() -> None:
+    llm = FakeLLM("What are the password length rules?", "Twelve characters [1].")
+    service, searcher = _service(
+        [_hit("Passwords need twelve characters.", 0.9)], llm, condense_queries=True
+    )
+
+    await _stream(service, history=HISTORY)
+
+    assert searcher.calls[0]["query"] == "What are the password length rules?"

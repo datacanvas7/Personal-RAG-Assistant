@@ -19,6 +19,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import DocumentChunk
+from app.retrieval.filters import restrict_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,9 @@ class VectorStore(Protocol):
         *,
         top_k: int,
         document_ids: Sequence[uuid.UUID] | None = None,
+        content_types: Sequence[str] | None = None,
+        page_from: int | None = None,
+        page_to: int | None = None,
     ) -> list[ScoredChunk]: ...
 
 
@@ -79,6 +83,9 @@ class PgVectorStore:
         *,
         top_k: int,
         document_ids: Sequence[uuid.UUID] | None = None,
+        content_types: Sequence[str] | None = None,
+        page_from: int | None = None,
+        page_to: int | None = None,
     ) -> list[ScoredChunk]:
         # HNSW is an approximate index, and a WHERE clause is applied to the candidates it
         # returns (default 40). For a user who owns a small share of all chunks most
@@ -88,7 +95,7 @@ class PgVectorStore:
         await self._enable_iterative_scan()
 
         distance = DocumentChunk.embedding.cosine_distance(list(query_embedding))
-        statement = (
+        statement = restrict_chunks(
             select(
                 DocumentChunk.id,
                 DocumentChunk.document_id,
@@ -96,18 +103,14 @@ class PgVectorStore:
                 DocumentChunk.page_number,
                 DocumentChunk.content,
                 distance.label("distance"),
-            )
-            .where(
-                DocumentChunk.user_id == user_id,
-                DocumentChunk.embedding.is_not(None),
-            )
-            .order_by(distance)
-            .limit(top_k)
+            ).where(DocumentChunk.embedding.is_not(None)),
+            user_id=user_id,
+            document_ids=document_ids,
+            content_types=content_types,
+            page_from=page_from,
+            page_to=page_to,
         )
-        if document_ids is not None:
-            # Combined with the user filter above, so ids of other users' documents (or
-            # ids that do not exist) simply match nothing.
-            statement = statement.where(DocumentChunk.document_id.in_(document_ids))
+        statement = statement.order_by(distance).limit(top_k)
 
         rows = (await self._session.execute(statement)).all()
         # relaxed_order may return rows slightly out of order; sort them properly.

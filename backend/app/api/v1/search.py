@@ -20,5 +20,8 @@ async def search(
         query=body.query,
         top_k=body.top_k,
         document_ids=body.document_ids,
+        content_types=body.content_types,
+        page_from=body.page_from,
+        page_to=body.page_to,
     )
     return SearchResponse(results=results)

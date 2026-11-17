@@ -33,7 +33,7 @@ from app.core.config import get_settings
 from app.db.session import get_sync_sessionmaker
 from app.ingestion.pipeline import run_ingestion
 from app.llm.base import ChatMessage, LLMResult
-from app.rag.prompt_builder import NOT_FOUND_ANSWER
+from app.rag.prompt_builder import CONDENSE_QUESTION_LABEL, CONDENSE_SYSTEM_PROMPT, NOT_FOUND_ANSWER
 from app.repositories.documents import SqlIngestionStore
 from app.services.storage import LocalFileStorage
 from tests.fakes import FakeEmbedder
@@ -57,6 +57,9 @@ class ExtractiveLLM:
 
     def _reply(self, messages: Sequence[ChatMessage]) -> str:
         last = messages[-1].content
+        if messages[0].content == CONDENSE_SYSTEM_PROMPT:
+            # Query rewriting: a stand-in that returns the follow-up unchanged.
+            return last.rsplit(CONDENSE_QUESTION_LABEL, 1)[1].strip()
         passages = PASSAGE.findall(last)
         if not passages:
             return NOT_FOUND_ANSWER

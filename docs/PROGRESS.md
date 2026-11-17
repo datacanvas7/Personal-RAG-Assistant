@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 6 — verified in CI; a real Gemini run with your key is still open from Phase 5** (2026-11-15)
+Current phase: **Phase 9 — implemented and verified locally, not yet pushed**; Phase 8 CI fix committed locally; a real Gemini run with your key is still open from Phase 5 (2026-11-18)
 
 ---
 
@@ -240,13 +240,25 @@ Local caveat: `tests/unit/test_real_embedding_model.py` could not be collected h
 
 ## Phase 9 — Advanced RAG
 
-- [ ] Hybrid search (full-text + vector, RRF)
-- [ ] Reranking
-- [ ] Follow-up question condensing
-- [ ] Chunking improvements
-- [ ] Evaluation dataset; Recall@K, MRR, groundedness, citation correctness
-- [ ] Comparison of retrieval configurations → `evaluation.md`
-- **Exit:** evaluation report with measured numbers for at least three configurations.
+- [x] Hybrid search: PostgreSQL full-text (generated `tsvector` + GIN, migration 0005) and vector search merged with Reciprocal Rank Fusion; `RETRIEVAL_MODE` = vector | keyword | hybrid
+- [x] Configurable top-K (per request and per user, as before) and candidate pool (`RETRIEVAL_CANDIDATE_MULTIPLIER`)
+- [x] Metadata filters: `document_ids` (document-specific retrieval), `content_types`, `page_from`/`page_to`; one SQL helper (`retrieval/filters.py`) used by both searches, always scoped to the caller
+- [x] Reranking: `Reranker` protocol + `LexicalReranker` (cosine + term coverage). **Off by default**: it did not improve on hybrid in the evaluation, and weight 0.5 lowered Recall@1 (see `docs/evaluation.md`)
+- [x] Follow-up question condensing (one extra model call, falls back to the user's words on any failure; `QUERY_CONDENSING`)
+- [~] Chunking: compared five size/overlap settings on the evaluation set; none beat the current 1500/200, so the chunker is unchanged. No new chunking technique was added
+- [x] Evaluation harness (`app/evaluation`, `python -m app.scripts.evaluate`): 18 synthetic documents, 44 labelled questions, Recall@1/3/5 and MRR, per question type
+- [x] Comparison of five retrieval configurations, a reranker-weight sweep and five chunk sizes with the real embedding model → `docs/evaluation.md`
+- [ ] Groundedness and citation correctness (need an LLM judge; not measured, no number claimed)
+- **Exit:** evaluation report with measured numbers for at least three configurations: **met** (`docs/evaluation.md`).
+
+Verified (local PostgreSQL 16 + pgvector 0.6.2, real `bge-small-en-v1.5`):
+- 22 keyword/filter integration tests (tsvector, stemming, exact codes, OR semantics, ranking, per-user isolation, hostile query strings, document/page/file-type filters) and the migration-matches-models test
+- 7 evaluation integration tests, 13 evaluation unit tests, 8 query-condensing tests, hybrid/fusion/reranker unit tests
+
+Findings worth remembering:
+- Vector search ranks `E-4471` and `AES-256` below position 1; keyword search misses 2-3 paraphrases; hybrid missed none. That is the case for hybrid, measured.
+- The evaluation set is small and saturated (Recall@3 = 100% everywhere), so it cannot separate hybrid from hybrid + rerank or one chunk size from another. This is stated in the report.
+- **Windows long paths:** the `.venv` inside the OneDrive folder exceeds the 260-character path limit, so importing `transformers` fails (`FileNotFoundError` for a file that exists). Workaround used here: `subst X: <backend folder>` and run Python from `X:\`. Not a project bug; a short checkout path or enabling long paths avoids it.
 
 ## Phase 10 — Production Readiness
 

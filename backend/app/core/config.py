@@ -94,6 +94,19 @@ class Settings(BaseSettings):
     # Chunks scoring below this cosine similarity are not used. A starting point: it is
     # tuned against a labelled question set in Phase 11.
     retrieval_score_threshold: float = Field(default=0.45, ge=0, le=1)
+    # How candidate chunks are found: embeddings only, full-text only, or both merged with
+    # Reciprocal Rank Fusion. Chosen from the comparison in docs/evaluation.md.
+    retrieval_mode: Literal["vector", "keyword", "hybrid"] = "hybrid"
+    # Rerank a wider candidate pool before keeping the top K (see retrieval/reranker.py).
+    # Off by default: on top of hybrid search it did not improve the evaluation set
+    # (docs/evaluation.md), so it is opt-in until it is measured to help on real documents.
+    retrieval_rerank: bool = False
+    # Candidates fetched per ranking = top_k x this, before fusion and reranking.
+    retrieval_candidate_multiplier: int = Field(default=4, ge=1, le=20)
+    # Rewrite a follow-up question ("and the second one?") into a standalone one before
+    # searching. Costs one extra, short model call per follow-up; falls back to the original
+    # question if that call fails.
+    query_condensing: bool = True
     # Size budget for the retrieved passages in one prompt, in characters (like chunking).
     max_context_chars: int = Field(default=12_000, ge=500)
     chat_history_max_messages: int = Field(default=6, ge=0, le=40)

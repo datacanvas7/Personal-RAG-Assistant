@@ -17,6 +17,7 @@ from app.rag.citations import resolve_citations
 from app.rag.prompt_builder import (
     NOT_FOUND_ANSWER,
     ContextPassage,
+    build_condense_messages,
     build_messages,
     select_within_budget,
 )
@@ -25,6 +26,8 @@ from app.schemas.search import SearchHit
 logger = logging.getLogger(__name__)
 
 _EXCERPT_CHARS = 300
+# A rewritten question longer than this is not a question; the original is used instead.
+_MAX_CONDENSED_CHARS = 500
 
 
 class Searcher(Protocol):
@@ -97,6 +100,7 @@ class RagService:
         score_threshold: float,
         max_context_chars: int,
         history_max_messages: int,
+        condense_queries: bool = False,
         release_connection: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._searcher = searcher
@@ -105,9 +109,37 @@ class RagService:
         self._threshold = score_threshold
         self._max_context_chars = max_context_chars
         self._history_max = history_max_messages
+        self._condense = condense_queries
         # Called once retrieval is done, before the (slow) model call, so the database
         # connection goes back to the pool instead of idling for the whole generation.
         self._release = release_connection
+
+    async def _search_query(self, question: str, history: Sequence[ChatMessage]) -> str:
+        """The text to search for: the question itself, or a standalone rewrite of a follow-up.
+
+        "And what about the second one?" means nothing to a search engine. With history, the
+        model first rewrites it using the conversation. This is an optimisation, never a
+        requirement: any failure or odd answer falls back to the user's own words.
+        """
+        if not self._condense or not history or self._llm is None:
+            return question
+        try:
+            result = await self._llm.complete(
+                build_condense_messages(
+                    question=question, history=history, history_max_messages=self._history_max
+                )
+            )
+        except LLMError:
+            logger.warning(
+                "rewriting the follow-up question failed; using it as asked", exc_info=True
+            )
+            return question
+        # Models sometimes wrap the answer in quotes or add a second line of commentary.
+        lines = result.text.strip().splitlines()
+        rewritten = lines[0].strip().strip("\"'").strip() if lines else ""
+        if not rewritten or len(rewritten) > _MAX_CONDENSED_CHARS:
+            return question
+        return rewritten
 
     async def _prepare(
         self,
@@ -121,7 +153,7 @@ class RagService:
         """Retrieve and build the prompt. ``None`` means nothing relevant was found."""
         hits = await self._searcher.search(
             user_id=user_id,
-            query=question,
+            query=await self._search_query(question, history),
             top_k=top_k or self._top_k,
             document_ids=document_ids,
         )

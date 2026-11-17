@@ -24,6 +24,8 @@ from app.repositories.auth import RefreshTokenRepository, UserRepository
 from app.repositories.conversations import ConversationRepository, MessageRepository
 from app.repositories.documents import DocumentRepository
 from app.repositories.user_settings import UserSettingsRepository
+from app.retrieval.keyword_store import PgKeywordStore
+from app.retrieval.reranker import LexicalReranker
 from app.retrieval.service import SearchService
 from app.retrieval.vector_store import PgVectorStore
 from app.services.analytics import AnalyticsService
@@ -107,11 +109,17 @@ def get_embedder() -> EmbeddingProvider:
 EmbedderDep = Annotated[EmbeddingProvider, Depends(get_embedder)]
 
 
-def get_search_service(session: SessionDep, embedder: EmbedderDep) -> SearchService:
+def get_search_service(
+    session: SessionDep, embedder: EmbedderDep, settings: SettingsDep
+) -> SearchService:
     return SearchService(
         embedder=embedder,
         vectors=PgVectorStore(session),
+        keywords=PgKeywordStore(session),
         documents=DocumentRepository(session),
+        reranker=LexicalReranker() if settings.retrieval_rerank else None,
+        mode=settings.retrieval_mode,
+        candidate_multiplier=settings.retrieval_candidate_multiplier,
     )
 
 
@@ -148,6 +156,7 @@ async def get_rag_service(
         score_threshold=retrieval.score_threshold,
         max_context_chars=settings.max_context_chars,
         history_max_messages=settings.chat_history_max_messages,
+        condense_queries=settings.query_condensing,
         # Retrieval only reads; ending its transaction returns the connection to the pool
         # before the slow model call (a no-op if nothing was read).
         release_connection=session.commit,

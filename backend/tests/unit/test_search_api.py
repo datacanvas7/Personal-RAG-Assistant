@@ -57,7 +57,12 @@ class InMemoryVectorStore:
         *,
         top_k: int,
         document_ids: Sequence[uuid.UUID] | None = None,
+        content_types: Sequence[str] | None = None,
+        page_from: int | None = None,
+        page_to: int | None = None,
     ) -> list[ScoredChunk]:
+        # Metadata filters are exercised against PostgreSQL in tests/integration; the fake
+        # only has to accept them.
         scored = [
             ScoredChunk(
                 chunk_id=uuid.uuid4(),
@@ -216,8 +221,24 @@ async def test_no_documents_is_an_empty_result_not_an_error(env: Env) -> None:
         {"query": "ok", "top_k": 0},
         {"query": "ok", "top_k": 51},
         {"query": "ok", "document_ids": ["not-a-uuid"]},
+        {"query": "ok", "page_from": 0},
+        {"query": "ok", "page_from": 5, "page_to": 2},
+        {"query": "ok", "content_types": ["x" * 128]},
+        {"query": "ok", "content_types": ["application/pdf"] * 21},
     ],
-    ids=["missing", "empty", "blank", "too-long", "top_k-zero", "top_k-large", "bad-id"],
+    ids=[
+        "missing",
+        "empty",
+        "blank",
+        "too-long",
+        "top_k-zero",
+        "top_k-large",
+        "bad-id",
+        "page-zero",
+        "page-range-backwards",
+        "type-too-long",
+        "too-many-types",
+    ],
 )
 async def test_invalid_requests_are_rejected(env: Env, body: dict[str, object]) -> None:
     headers, _ = await _login(env, "ada@example.com")
@@ -226,6 +247,20 @@ async def test_invalid_requests_are_rejected(env: Env, body: dict[str, object]) 
 
     assert response.status_code == 422
     assert env.embedder.calls == 0  # rejected before any embedding work
+
+
+async def test_metadata_filters_are_accepted(env: Env) -> None:
+    headers, _ = await _login(env, "ada@example.com")
+    body = {
+        "query": "ok",
+        "content_types": ["application/pdf"],
+        "page_from": 2,
+        "page_to": 4,
+    }
+
+    response = await env.client.post(URL, headers=headers, json=body)
+
+    assert response.status_code == 200
 
 
 async def test_an_embedding_outage_is_a_503_without_internals(env: Env) -> None:

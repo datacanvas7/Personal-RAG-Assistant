@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 import httpx2
 import pytest
+from fastapi import FastAPI
 
 from app.api.deps import (
     get_auth_service,
@@ -17,10 +18,10 @@ from app.api.deps import (
     get_search_service,
     get_settings_service,
 )
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.llm.base import LLMError, LLMUnavailableError
 from app.main import create_app
-from app.rag.prompt_builder import NOT_FOUND_ANSWER
+from app.rag.prompt_builder import CONDENSE_SYSTEM_PROMPT, NOT_FOUND_ANSWER
 from app.retrieval.service import SearchService
 from app.services.auth import AuthService
 from app.services.settings import SettingsService, UserPreferences
@@ -43,11 +44,14 @@ URL = "/api/v1/ask"
 class AskEnv(SearchEnv):
     llm: FakeLLM
     preferences: FakeSettingsStore
+    app: FastAPI
 
 
 @pytest.fixture
 async def env() -> AsyncIterator[AskEnv]:
-    settings = Settings()
+    # Rewriting follow-up questions is on by default and makes its own model call; these
+    # tests script the model's replies one by one, so it is off here and has its own test.
+    settings = Settings(query_condensing=False)
     users, tokens = FakeUserStore(), FakeTokenStore()
     documents, embedder = FakeDocumentStore(), FakeEmbedder()
     vectors = InMemoryVectorStore(embedder)
@@ -62,12 +66,13 @@ async def env() -> AsyncIterator[AskEnv]:
         embedder=embedder, vectors=vectors, documents=documents
     )
     app.dependency_overrides[get_llm] = lambda: llm
+    app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_settings_service] = lambda: SettingsService(
         store=preferences, transaction=FakeTransaction(), settings=settings
     )
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield AskEnv(client, users, documents, vectors, embedder, llm, preferences)
+        yield AskEnv(client, users, documents, vectors, embedder, llm, preferences, app)
 
 
 async def test_ask_requires_authentication(env: AskEnv) -> None:
@@ -154,6 +159,33 @@ async def test_history_and_document_filter_are_applied(env: AskEnv) -> None:
     sent = env.llm.calls[0]
     assert [m.role for m in sent] == ["system", "user", "assistant", "user"]
     assert "another file" not in sent[-1].content
+
+
+async def test_a_follow_up_is_rewritten_before_searching_when_condensing_is_on(
+    env: AskEnv,
+) -> None:
+    env.app.dependency_overrides[get_settings] = lambda: Settings(query_condensing=True)
+    headers, user_id = await _login(env, "ada@example.com")
+    _document(env, user_id, "a.txt", ["Apples are red and sweet."])
+    # First model call: the rewrite. Second: the answer.
+    env.llm.replies.extend(["Are apples red?", "They are red [1]."])
+
+    response = await env.client.post(
+        URL,
+        headers=headers,
+        json={
+            "question": "And the colour?",  # shares no word with the document
+            "history": [
+                {"role": "user", "content": "Tell me about apples"},
+                {"role": "assistant", "content": "They are fruit."},
+            ],
+        },
+    )
+
+    assert [s["filename"] for s in response.json()["sources"]] == ["a.txt"]
+    assert env.llm.calls[0][0].content == CONDENSE_SYSTEM_PROMPT
+    # The answer is still asked in the user's own words.
+    assert env.llm.calls[1][-1].content.endswith("Question: And the colour?")
 
 
 @pytest.mark.parametrize(
