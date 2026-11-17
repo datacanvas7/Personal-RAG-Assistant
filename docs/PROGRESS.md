@@ -221,14 +221,22 @@ client (the token lives only in memory), so they opt out of Next's instant-navig
 
 ## Phase 8 — Chat Interface
 
-- [ ] Chat layout and conversation sidebar
-- [ ] Message components with sanitised Markdown
-- [ ] Streaming rendering
-- [ ] Source citations with expandable excerpts
-- [ ] Document scope selector
-- [ ] Copy / retry; loading and error states
-- [ ] Playwright tests: auth, upload, library, chat, citations
-- **Exit:** full user journey passes in Playwright.
+- [x] Chat layout and conversation sidebar (rename, delete, mobile drawer)
+- [x] Message components with sanitised Markdown (no raw HTML, safe links)
+- [x] Streaming rendering (own SSE parser, 8 unit tests incl. split CRLF/multibyte)
+- [x] Source citations (clickable `[n]` chips open and highlight the source entry). The API stores no excerpt, so entries show file, page and relevance.
+- [x] Document scope selector
+- [x] Copy / retry; loading and error states
+- [x] Playwright tests: 12 desktop journey tests + 1 phone-width test, run locally against the real API and Postgres (only the models are stand-ins, `backend/tests/e2e_server.py`)
+- [x] CI: `npm test` added to the frontend job; new `e2e` job (not yet run on GitHub)
+- **Exit:** full journey passes in Playwright locally (13/13). **Not yet verified on CI.**
+
+Bugs found by running the real stack (fixed):
+- `next start` gzip buffered the SSE stream, so answers arrived all at once. The stream now sends `Cache-Control: no-transform`; an e2e test asserts the answer grows in several steps.
+- `SET hnsw.iterative_scan` made search return 500 on pgvector older than 0.8; it is now attempted in a savepoint and skipped with a warning.
+- The scope selector showed "All documents" with every box unticked; they now show ticked.
+
+Local caveat: `tests/unit/test_real_embedding_model.py` could not be collected here (a file missing from the venv); the other 354 unit tests, ruff, ruff format and mypy pass. Backend integration tests were not re-run after the vector-store change.
 
 ## Phase 9 — Advanced RAG
 

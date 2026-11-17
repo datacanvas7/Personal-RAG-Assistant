@@ -146,6 +146,31 @@ export function apiRequest<T>(path: string, options: RequestOptions = {}): Promi
 }
 
 /**
+ * POST JSON and hand back the still-open response, for streamed (SSE) answers. Failures that
+ * happen before the stream starts (404, 503, 422...) are ordinary HTTP errors and throw here.
+ */
+export function openStream(path: string, json: unknown, signal?: AbortSignal): Promise<Response> {
+  return authorized(async (token) => {
+    const response = await networkSafe(() =>
+      fetch(`${API_BASE}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(json),
+        signal,
+        cache: "no-store",
+      }),
+    );
+    if (!response.ok) throw parseErrorBody(response.status, await readJson(response));
+    if (!response.body) throw new NetworkError();
+    return response;
+  });
+}
+
+/**
  * POST a file as multipart form data with upload progress (fetch cannot report it).
  * `onProgress` receives 0–100 while the bytes leave the browser; after that the server is
  * still working, which the caller shows as its own state.

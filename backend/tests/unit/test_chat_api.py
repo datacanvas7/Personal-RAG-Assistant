@@ -511,7 +511,8 @@ async def test_a_stream_sends_tokens_then_the_saved_messages(env: ChatEnv) -> No
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
-    assert response.headers["cache-control"] == "no-cache"
+    # no-transform keeps a compressing proxy (Next's gzip layer) from buffering the stream.
+    assert response.headers["cache-control"] == "no-cache, no-transform"
     events = _sse(response.text)
     assert [name for name, _ in events] == ["token"] * 4 + ["done"]
     assert "".join(data["text"] for name, data in events if name == "token") == ANSWER

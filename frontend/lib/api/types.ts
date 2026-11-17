@@ -95,3 +95,59 @@ export type OverviewResponse = {
     questions_asked: number;
   };
 };
+
+/* ---- Chat ---- */
+
+export type Conversation = {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConversationList = {
+  items: Conversation[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+/** One passage an answer relied on. `number` is the [n] marker in the answer text. */
+export type Source = {
+  number: number;
+  document_id: string | null;
+  chunk_id: string | null;
+  filename: string;
+  page_number: number | null;
+  score: number;
+};
+
+export type ChatRole = "user" | "assistant";
+
+export type Message = {
+  id: string;
+  role: ChatRole;
+  content: string;
+  created_at: string;
+  sources: Source[];
+};
+
+export type MessageList = {
+  items: Message[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+/** The saved pair of messages an answered question produces. */
+export type ChatExchange = {
+  user_message: Message;
+  assistant_message: Message;
+  grounded: boolean;
+};
+
+export type SendMessageBody = {
+  content: string;
+  /** Restrict retrieval to these documents; null/absent searches the whole library. */
+  document_ids?: string[] | null;
+};

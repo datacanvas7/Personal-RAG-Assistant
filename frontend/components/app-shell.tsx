@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, LayoutDashboard, LogOut, Settings, User as UserIcon } from "lucide-react";
+import { FileText, LayoutDashboard, LogOut, MessageSquare, Settings, User as UserIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

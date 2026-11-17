@@ -185,5 +185,8 @@ async def stream_message(
         encode(),
         media_type="text/event-stream",
         # No caching, and tell nginx-style proxies not to buffer, or tokens arrive in bulk.
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        # no-transform stops intermediaries (notably the gzip layer of `next start`, which
+        # sits between the browser and this API) from compressing and thereby buffering the
+        # stream; X-Accel-Buffering does the same for nginx.
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )

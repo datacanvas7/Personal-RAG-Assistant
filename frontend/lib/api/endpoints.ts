@@ -1,11 +1,17 @@
-import { API_BASE, apiRequest, setAccessToken, uploadFile } from "./client";
-import { NetworkError } from "./errors";
+import { API_BASE, apiRequest, openStream, setAccessToken, uploadFile } from "./client";
+import { ApiError, NetworkError } from "./errors";
+import { readEvents } from "./sse";
 import type {
+  ChatExchange,
+  Conversation,
+  ConversationList,
   DocumentList,
   DocumentRead,
   DocumentStatusRead,
   HealthResponse,
+  MessageList,
   OverviewResponse,
+  SendMessageBody,
   SettingsRead,
   SettingsUpdate,
   TokenResponse,
@@ -105,3 +111,74 @@ export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse>
   }
   return (await response.json()) as HealthResponse;
 }
+
+export const chatApi = {
+  listConversations(params: { limit?: number; offset?: number } = {}, signal?: AbortSignal) {
+    const query = new URLSearchParams();
+    if (params.limit !== undefined) query.set("limit", String(params.limit));
+    if (params.offset !== undefined) query.set("offset", String(params.offset));
+    const suffix = query.size ? `?${query}` : "";
+    return apiRequest<ConversationList>(`/chat/conversations${suffix}`, { signal });
+  },
+
+  createConversation(title?: string): Promise<Conversation> {
+    return apiRequest<Conversation>("/chat/conversations", {
+      method: "POST",
+      json: title ? { title } : {},
+    });
+  },
+
+  renameConversation(id: string, title: string): Promise<Conversation> {
+    return apiRequest<Conversation>(`/chat/conversations/${id}`, { method: "PATCH", json: { title } });
+  },
+
+  removeConversation(id: string): Promise<void> {
+    return apiRequest<void>(`/chat/conversations/${id}`, { method: "DELETE" });
+  },
+
+  listMessages(id: string, signal?: AbortSignal): Promise<MessageList> {
+    return apiRequest<MessageList>(`/chat/conversations/${id}/messages?limit=200`, { signal });
+  },
+
+  /** Non-streaming fallback: waits for the whole answer. */
+  send(id: string, body: SendMessageBody): Promise<ChatExchange> {
+    return apiRequest<ChatExchange>(`/chat/${id}/messages`, { method: "POST", json: body });
+  },
+
+  /**
+   * Ask a question and receive the answer as it is written. `onToken` gets each piece of
+   * text; the promise resolves with the saved messages (with their sources) once the server
+   * says it is done, and rejects with an ApiError if generation fails midway.
+   */
+  async stream(
+    id: string,
+    body: SendMessageBody,
+    handlers: { onToken: (text: string) => void; signal?: AbortSignal },
+  ): Promise<ChatExchange> {
+    const response = await openStream(`/chat/${id}/stream`, body, handlers.signal);
+    let exchange: ChatExchange | null = null;
+    try {
+      for await (const event of readEvents(response.body as ReadableStream<Uint8Array>)) {
+        const payload = JSON.parse(event.data) as Record<string, unknown>;
+        if (event.event === "token") {
+          handlers.onToken(String(payload.text ?? ""));
+        } else if (event.event === "done") {
+          exchange = payload as unknown as ChatExchange;
+        } else if (event.event === "error") {
+          const error = payload.error as { code?: string; message?: string } | undefined;
+          throw new ApiError(
+            200,
+            error?.code ?? "error",
+            error?.message ?? "The answer could not be completed.",
+          );
+        }
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (error instanceof ApiError) throw error;
+      throw new NetworkError();
+    }
+    if (!exchange) throw new NetworkError();
+    return exchange;
+  },
+};

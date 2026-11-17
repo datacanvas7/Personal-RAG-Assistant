@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { analyticsApi, documentsApi, settingsApi } from "@/lib/api/endpoints";
+import { analyticsApi, chatApi, documentsApi, settingsApi } from "@/lib/api/endpoints";
 import type { DocumentList, DocumentRead, SettingsUpdate } from "@/lib/api/types";
 
 export const queryKeys = {
   documents: ["documents"] as const,
   settings: ["settings"] as const,
   overview: ["overview"] as const,
+  conversations: ["conversations"] as const,
+  messages: (conversationId: string) => ["messages", conversationId] as const,
 };
 
 /** How often to ask the server about documents that are still being processed. */
@@ -80,5 +82,44 @@ export function useRetryDocument() {
   return useMutation({
     mutationFn: (id: string) => documentsApi.retry(id),
     onSuccess: invalidate,
+  });
+}
+
+/* ---- Chat ---- */
+
+export function useConversations() {
+  return useQuery({
+    queryKey: queryKeys.conversations,
+    queryFn: ({ signal }) => chatApi.listConversations({ limit: 100 }, signal),
+  });
+}
+
+export function useMessages(conversationId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.messages(conversationId ?? "none"),
+    queryFn: ({ signal }) => chatApi.listMessages(conversationId as string, signal),
+    enabled: conversationId !== null,
+  });
+}
+
+export function useRenameConversation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) => chatApi.renameConversation(id, title),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.conversations }),
+  });
+}
+
+export function useDeleteConversation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => chatApi.removeConversation(id),
+    onSuccess: (_result, id) => {
+      queryClient.removeQueries({ queryKey: queryKeys.messages(id) });
+      return Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversations }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.overview }),
+      ]);
+    },
   });
 }
