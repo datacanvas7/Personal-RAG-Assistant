@@ -102,7 +102,7 @@ jobs:
       POSTGRES_PASSWORD: ci-only-password
       JWT_SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
       LLM_API_KEY: ci-not-a-real-key
-      UPLOAD_DIR: ${{ runner.temp }}/e2e-uploads
+      UPLOAD_DIR: /tmp/e2e-uploads
       E2E_PORT: "8000"
     steps:
       - uses: actions/checkout@v7
