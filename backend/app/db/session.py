@@ -20,7 +20,21 @@ def get_engine() -> AsyncEngine:
     # Creating the engine opens no connection; that happens on first use.
     # pool_pre_ping replaces connections that the database has closed (e.g. after a
     # Postgres restart) instead of failing the first request that picks one up.
-    return create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    settings = get_settings()
+    return create_async_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout_seconds,
+        pool_recycle=settings.db_pool_recycle_seconds,
+        connect_args={
+            "connect_timeout": 10,
+            # Applies to every statement of an API request. The worker's engine (below)
+            # has no such limit: indexing and bulk inserts may legitimately run long.
+            "options": f"-c statement_timeout={settings.db_statement_timeout_ms}",
+        },
+    )
 
 
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:

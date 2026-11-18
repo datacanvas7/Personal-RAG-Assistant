@@ -15,6 +15,8 @@ from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.core.limits import MaxBodySizeMiddleware
 from app.core.logging import configure_logging
+from app.core.middleware import RequestContextMiddleware
+from app.core.ratelimit import DisabledRateLimiter, RedisRateLimiter
 from app.db.session import get_engine, get_sync_engine
 from app.embeddings.factory import get_embedding_provider
 from app.embeddings.guard import check_embedding_index
@@ -50,17 +52,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, settings.log_format)
 
     app = FastAPI(
         title=settings.project_name,
         version=settings.version,
         # Docs live under the API prefix so they are reachable through the same
         # proxy path as the API itself.
-        docs_url=f"{settings.api_v1_prefix}/docs",
+        # (Off in production unless ENABLE_API_DOCS is set: no reason to publish the schema.)
+        docs_url=f"{settings.api_v1_prefix}/docs" if settings.api_docs_enabled else None,
         redoc_url=None,
-        openapi_url=f"{settings.api_v1_prefix}/openapi.json",
+        openapi_url=(
+            f"{settings.api_v1_prefix}/openapi.json" if settings.api_docs_enabled else None
+        ),
         lifespan=lifespan,
+    )
+
+    # Counters live in Redis; the client is created in the lifespan, hence the lambda.
+    app.state.rate_limiter = (
+        RedisRateLimiter(lambda: app.state.redis)
+        if settings.rate_limit_enabled
+        else DisabledRateLimiter()
     )
 
     if settings.cors_origins:
@@ -77,6 +89,9 @@ def create_app() -> FastAPI:
         path_suffix="/documents/upload",
         max_body_bytes=settings.max_upload_bytes,
     )
+
+    # Added last = outermost: every response, including the 413 above, gets a request id.
+    app.add_middleware(RequestContextMiddleware, hsts=settings.environment == "production")
 
     register_error_handlers(app)
     app.include_router(api_router, prefix=settings.api_v1_prefix)

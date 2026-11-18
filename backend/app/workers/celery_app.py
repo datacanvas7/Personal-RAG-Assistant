@@ -6,7 +6,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 
 settings = get_settings()
-configure_logging(settings.log_level)
+configure_logging(settings.log_level, settings.log_format)
 
 celery_app = Celery(
     "personal_rag_assistant",

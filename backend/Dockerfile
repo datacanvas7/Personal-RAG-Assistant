@@ -51,4 +51,4 @@ EXPOSE 8000
 
 # `--proxy-headers` makes client IPs (needed for rate limiting in Phase 10) come from
 # X-Forwarded-For when the app runs behind a reverse proxy.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--no-access-log"]

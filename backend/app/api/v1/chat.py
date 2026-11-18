@@ -3,10 +3,10 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
 
-from app.api.deps import ChatServiceDep, CurrentUserDep
+from app.api.deps import ChatServiceDep, CurrentUserDep, limit_by_user
 from app.api.sse import format_event
 from app.core.errors import AppError
 from app.schemas.chat import (
@@ -106,6 +106,7 @@ async def list_messages(
     "/{conversation_id}/messages",
     response_model=ChatResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(limit_by_user("ask_user"))],
 )
 async def send_message(
     conversation_id: uuid.UUID,
@@ -127,6 +128,7 @@ async def send_message(
 @router.post(
     "/{conversation_id}/stream",
     response_class=StreamingResponse,
+    dependencies=[Depends(limit_by_user("ask_user"))],
     responses={
         200: {
             "content": {"text/event-stream": {}},

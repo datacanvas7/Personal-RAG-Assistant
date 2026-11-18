@@ -13,6 +13,8 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
+from app.core.ratelimit import Rule
+
 # Values shipped in .env.example. They must never reach production.
 _PLACEHOLDER_PREFIX = "change-me"
 _MIN_JWT_SECRET_LENGTH = 32
@@ -31,6 +33,10 @@ class Settings(BaseSettings):
     version: str = "0.1.0"
     environment: Literal["development", "test", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    # "text" for a terminal, "json" (one object per line) for log collectors.
+    log_format: Literal["text", "json"] = "text"
+    # The interactive API docs. None = on, except in production, where they are off.
+    enable_api_docs: bool | None = None
     api_v1_prefix: str = "/api/v1"
 
     # Comma-separated browser origins allowed to call the API directly. Empty by
@@ -61,6 +67,32 @@ class Settings(BaseSettings):
     refresh_reuse_grace_seconds: int = Field(default=10, ge=0)
     # Send the refresh cookie only over HTTPS. Must be true in production.
     cookie_secure: bool = False
+
+    # --- Database connections (API process) ---------------------------------------------
+    # At most pool_size + max_overflow connections per API process; a request that cannot
+    # get one within pool_timeout fails instead of queueing forever. The statement timeout
+    # stops one runaway query from holding a connection (and a request) indefinitely.
+    db_pool_size: int = Field(default=10, ge=1)
+    db_max_overflow: int = Field(default=10, ge=0)
+    db_pool_timeout_seconds: int = Field(default=30, ge=1)
+    # Replace connections older than this, so a firewall or proxy cannot silently drop them.
+    db_pool_recycle_seconds: int = Field(default=1800, ge=60)
+    db_statement_timeout_ms: int = Field(default=30_000, ge=1_000)
+
+    # --- Rate limiting ----------------------------------------------------------------
+    # Fixed windows per client (see core/ratelimit.py), written <count>/<window>, window in
+    # s, m or h. "ip" rules apply per client address, "user" rules per signed-in user.
+    rate_limit_enabled: bool = True
+    rate_limit_login_ip: str = "20/1m"
+    # Per account, so a distributed guessing attack on one address is slowed as well. A
+    # side effect: someone can lock a victim out for the window by guessing wrongly.
+    rate_limit_login_email: str = "10/15m"
+    rate_limit_register_ip: str = "10/1h"
+    rate_limit_refresh_ip: str = "60/1m"
+    rate_limit_upload_user: str = "60/1h"
+    # Questions cost a language-model call each (free tiers allow only a few per minute).
+    rate_limit_ask_user: str = "30/1m"
+    rate_limit_search_user: str = "120/1m"
 
     # --- Embeddings -------------------------------------------------------------------
     # Fixed in the database column type; changing it needs a migration and a re-index.
@@ -135,6 +167,23 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _check_rate_limits(self) -> Self:
+        for name in (
+            "rate_limit_login_ip",
+            "rate_limit_login_email",
+            "rate_limit_register_ip",
+            "rate_limit_refresh_ip",
+            "rate_limit_upload_user",
+            "rate_limit_ask_user",
+            "rate_limit_search_user",
+        ):
+            try:
+                Rule.parse(getattr(self, name))
+            except ValueError as error:
+                raise ValueError(f"{name.upper()}: {error}") from error
+        return self
+
+    @model_validator(mode="after")
     def _check_embeddings(self) -> Self:
         if self.embedding_provider == "openai" and not (
             self.openai_api_key and self.openai_api_key.get_secret_value()
@@ -157,6 +206,12 @@ class Settings(BaseSettings):
                 if secret.startswith(_PLACEHOLDER_PREFIX):
                     raise ValueError(f"{name} still has the .env.example placeholder value")
         return self
+
+    @property
+    def api_docs_enabled(self) -> bool:
+        if self.enable_api_docs is not None:
+            return self.enable_api_docs
+        return self.environment != "production"
 
     @property
     def database_url(self) -> URL:

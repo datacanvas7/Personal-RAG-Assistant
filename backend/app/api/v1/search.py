@@ -1,12 +1,14 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from app.api.deps import CurrentUserDep, SearchServiceDep
+from app.api.deps import CurrentUserDep, SearchServiceDep, limit_by_user
 from app.schemas.search import SearchRequest, SearchResponse
 
 router = APIRouter(prefix="/search", tags=["search"])
 
 
-@router.post("", response_model=SearchResponse)
+@router.post(
+    "", response_model=SearchResponse, dependencies=[Depends(limit_by_user("search_user"))]
+)
 async def search(
     body: SearchRequest, user: CurrentUserDep, service: SearchServiceDep
 ) -> SearchResponse:

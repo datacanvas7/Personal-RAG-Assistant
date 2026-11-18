@@ -13,6 +13,8 @@ What is replaced, so a test run needs no model download, API key or Redis/Celery
 Never use this to serve real users: answers are not produced by a language model.
 """
 
+# ruff: noqa: E402
+
 import asyncio
 import os
 import re
@@ -27,6 +29,10 @@ import uvicorn
 from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
+
+# The journeys register and sign in many users from one address within seconds, and this
+# server has no Redis for the counters. Rate limiting has its own tests.
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")  # must precede the app imports below
 
 from app.api import deps
 from app.core.config import get_settings

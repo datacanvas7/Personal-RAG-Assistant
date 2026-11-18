@@ -594,13 +594,16 @@ Limits: the stream is not resumable; responses carry `Cache-Control: no-cache` a
 | Prompt injection via documents | Retrieved text goes in clearly delimited data blocks, never the system role; system prompt states that document content is untrusted; the LLM has no tools, so injected text cannot trigger actions |
 | Data exfiltration through rendered Markdown | Raw HTML disabled; links sanitised; remote images not auto-loaded |
 | Malicious uploads | Extension allow-list + magic-byte check + size cap + empty-file check; server-generated filenames; storage outside any served directory; files are parsed, never executed; parser runs in the worker container as a non-root user |
-| Resource exhaustion (huge / pathological files) | Size, page-count and chunk-count limits; worker time limits; rate limits on upload and chat |
-| Credential attacks | Argon2id; rate-limited login; identical error for unknown email and wrong password |
+| Resource exhaustion (huge / pathological files) | Size, page-count and chunk-count limits; worker time limits; rate limits on upload and chat (Phase 10: `RATE_LIMIT_*`); bounded DB pool and a 30 s statement timeout on API queries |
+| Credential attacks | Argon2id; identical error for unknown email and wrong password; login limited per client address **and** per e-mail (Phase 10, `docs/operations.md`); no account lockout, which would let an attacker lock the owner out |
 | Token theft | Short access-token life; refresh rotation with reuse detection; `httpOnly` + `Secure` + `SameSite` cookie scoped to the auth path |
 | CSRF on the refresh cookie | `SameSite` cookie, strict CORS origin allow-list, JSON-only endpoints |
 | SQL injection | SQLAlchemy bound parameters only; no string-built SQL |
-| Secret leakage | Secrets only from environment; `.env` git-ignored; provider keys never sent to the browser; no stack traces in responses; logs exclude document text and tokens |
-| LLM cost abuse | Per-user rate limits; capped context and output tokens |
+| Secret leakage | Secrets only from environment; `.env` git-ignored; provider keys never sent to the browser; unhandled errors return a generic 500 with a request id, the traceback stays in the log; logs exclude document text, questions, answers and tokens, and request logs omit the query string (Phase 10) |
+| LLM cost abuse | Per-user rate limits on `/ask` and chat (Phase 10); capped context and output tokens |
+| Clickjacking, MIME sniffing, passive content leaks | `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, CSP on pages and a locked-down CSP on API responses; HSTS in production (Phase 10). Known gap: page CSP allows `'unsafe-inline'` (Next.js bootstrap scripts) |
+| Vulnerable dependencies | `pip-audit` and `npm audit` on every push and weekly; Dependabot update PRs gated by the full CI (Phase 10) |
+| Container escape / privilege escalation | Non-root users, `no-new-privileges`, all capabilities dropped, read-only root filesystem; only the frontend is published to the network (Phase 10; verified by the Compose smoke test, not penetration-tested) |
 
 ---
 
@@ -663,8 +666,10 @@ Defined in `.env.example` in Phase 1. Values marked *secret* are never committed
 | `RETRIEVAL_SCORE_THRESHOLD` | `0.45` | Minimum cosine similarity; untuned starting value (Phase 11) |
 | `CHAT_HISTORY_MAX_MESSAGES` | `6` | History window |
 | `MAX_CONTEXT_CHARS` | `12000` | Context budget (characters, not tokens) |
-| `HYBRID_SEARCH_ENABLED` / `RERANKER_ENABLED` | `false` | Phase 9 features |
-| `RATE_LIMIT_*` | per-route | Rate limiting |
+| `RETRIEVAL_MODE` / `RETRIEVAL_RERANK` / `QUERY_CONDENSING` | `hybrid` / `false` / `true` | Phase 9 retrieval features |
+| `RATE_LIMIT_ENABLED`, `RATE_LIMIT_<ROUTE>` | `true`, e.g. `20/1m` | Rate limiting (Phase 10, see `docs/operations.md`) |
+| `LOG_FORMAT` / `ENABLE_API_DOCS` | `text` / on outside production | Log format; API docs page |
+| `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_STATEMENT_TIMEOUT_MS`, ... | `10`, `10`, `30000` | API connection pool and query time limit |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000/api/v1` | The only variable exposed to the browser |
 
 ---

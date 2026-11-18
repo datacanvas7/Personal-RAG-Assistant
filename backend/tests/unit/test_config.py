@@ -94,3 +94,39 @@ def test_openai_key_is_not_exposed_by_repr() -> None:
     )
 
     assert "sk-very-secret" not in repr(settings)
+
+
+def test_rate_limit_settings_must_be_well_formed() -> None:
+    with pytest.raises(ValidationError, match="RATE_LIMIT_LOGIN_IP"):
+        Settings(postgres_password="x", rate_limit_login_ip="ten per minute")
+
+
+def test_api_docs_are_on_outside_production_and_off_in_production() -> None:
+    assert Settings(postgres_password="x", environment="development").api_docs_enabled
+    production = Settings(
+        postgres_password="a-real-looking-password",
+        jwt_secret_key="a-real-looking-secret-that-is-long-enough-0123456789",
+        environment="production",
+        cookie_secure=True,
+    )
+    assert not production.api_docs_enabled
+
+
+def test_api_docs_can_be_forced_on_in_production() -> None:
+    production = Settings(
+        postgres_password="a-real-looking-password",
+        jwt_secret_key="a-real-looking-secret-that-is-long-enough-0123456789",
+        environment="production",
+        cookie_secure=True,
+        enable_api_docs=True,
+    )
+    assert production.api_docs_enabled
+
+
+def test_database_pool_settings_have_safe_defaults() -> None:
+    settings = Settings(postgres_password="x")
+
+    assert (settings.db_pool_size, settings.db_max_overflow) == (10, 10)
+    assert settings.db_statement_timeout_ms == 30_000
+    with pytest.raises(ValidationError):
+        Settings(postgres_password="x", db_statement_timeout_ms=0)

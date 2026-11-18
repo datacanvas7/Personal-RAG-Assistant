@@ -57,6 +57,17 @@ class FileTooLargeError(AppError):
     code = "file_too_large"
 
 
+class RateLimitedError(AppError):
+    status_code = 429
+    code = "rate_limited"
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__(
+            f"Too many requests. Please try again in {retry_after_seconds} seconds.",
+            headers={"Retry-After": str(retry_after_seconds)},
+        )
+
+
 class ServiceUnavailableError(AppError):
     """A dependency this request needs (e.g. the embedding model) is not working. The
     message never names the dependency or its error; those go to the log."""

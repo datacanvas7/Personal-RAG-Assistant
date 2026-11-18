@@ -1,15 +1,20 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, File, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 
-from app.api.deps import CurrentUserDep, DocumentServiceDep, SettingsDep
+from app.api.deps import CurrentUserDep, DocumentServiceDep, SettingsDep, limit_by_user
 from app.schemas.documents import DocumentList, DocumentRead, DocumentStatusRead
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
-@router.post("/upload", response_model=DocumentRead, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/upload",
+    response_model=DocumentRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(limit_by_user("upload_user"))],
+)
 async def upload_document(
     file: Annotated[UploadFile, File(description="PDF, DOCX, TXT or Markdown file.")],
     user: CurrentUserDep,

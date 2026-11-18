@@ -4,6 +4,7 @@ Routers ask for a service; tests replace the provider with
 ``app.dependency_overrides`` to substitute a fake.
 """
 
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, Request
@@ -11,7 +12,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.core.errors import AuthenticationError
+from app.core.errors import AuthenticationError, RateLimitedError
+from app.core.ratelimit import RateLimiter, Rule
 from app.db.session import get_engine, get_session
 from app.embeddings.base import EmbeddingProvider
 from app.embeddings.factory import get_embedding_provider
@@ -73,6 +75,62 @@ async def get_current_user(
 
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+
+
+# --- Rate limiting -------------------------------------------------------------------------
+
+
+def get_rate_limiter(request: Request) -> RateLimiter:
+    limiter: RateLimiter = request.app.state.rate_limiter
+    return limiter
+
+
+class RateLimits:
+    """Looks a rule up by name in the settings and counts one request against it."""
+
+    def __init__(self, limiter: RateLimiter, settings: Settings) -> None:
+        self._limiter = limiter
+        self._settings = settings
+
+    async def enforce(self, rule_name: str, identity: str) -> None:
+        rule = Rule.parse(getattr(self._settings, f"rate_limit_{rule_name}"))
+        decision = await self._limiter.hit(f"{rule_name}:{identity}", rule)
+        if not decision.allowed:
+            raise RateLimitedError(decision.retry_after_seconds)
+
+
+def get_rate_limits(
+    limiter: Annotated[RateLimiter, Depends(get_rate_limiter)], settings: SettingsDep
+) -> RateLimits:
+    return RateLimits(limiter, settings)
+
+
+RateLimitsDep = Annotated[RateLimits, Depends(get_rate_limits)]
+
+
+def client_ip(request: Request) -> str:
+    """The caller's address. Behind a reverse proxy this is the proxy's address unless
+    uvicorn is told to trust its X-Forwarded-For (``--forwarded-allow-ips``); see
+    docs/operations.md."""
+    return request.client.host if request.client else "unknown"
+
+
+def limit_by_ip(rule_name: str) -> Callable[..., Awaitable[None]]:
+    """A route dependency: ``dependencies=[Depends(limit_by_ip("login_ip"))]``."""
+
+    async def dependency(request: Request, limits: RateLimitsDep) -> None:
+        await limits.enforce(rule_name, client_ip(request))
+
+    return dependency
+
+
+def limit_by_user(rule_name: str) -> Callable[..., Awaitable[None]]:
+    """Like ``limit_by_ip`` but per signed-in user (runs after authentication)."""
+
+    async def dependency(user: CurrentUserDep, limits: RateLimitsDep) -> None:
+        await limits.enforce(rule_name, str(user.id))
+
+    return dependency
 
 
 def get_file_storage(settings: SettingsDep) -> FileStorage:

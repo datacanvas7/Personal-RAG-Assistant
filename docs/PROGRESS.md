@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 9 — done, CI green (backend, frontend, Playwright browser tests and Docker Compose smoke test, run `e1b3b3f`)**; a real Gemini run with your key is still open from Phase 5 (2026-11-18)
+Current phase: **Phase 10 — implemented and verified locally; CI run pending** (Phase 9 closed green on `e1b3b3f`); a real Gemini run with your key is still open from Phase 5 (2026-11-18)
 
 ---
 
@@ -262,13 +262,25 @@ Findings worth remembering:
 
 ## Phase 10 — Production Readiness
 
-- [ ] Security review against the threat table
-- [ ] Rate limiting
-- [ ] Structured logging, request IDs, error monitoring hook
-- [ ] Database and query optimisation
-- [ ] Docker hardening (non-root, multi-stage, image size)
-- [ ] Full CI/CD pipeline
-- **Exit:** CI green including integration tests and Compose smoke test.
+- [x] Security review against the threat table (`docs/architecture.md` §8): each row checked against the code; new rows added for headers, dependencies and containers; gaps listed in `docs/operations.md` §7
+- [x] Rate limiting: Redis fixed-window limiter, fails open; login (per IP and per e-mail), register, refresh, upload, ask/chat, search; 429 with `Retry-After` in the standard error shape
+- [x] Structured logging: request id on every log line and response header, `LOG_FORMAT=json`, one access-log line per request without query strings or bodies, uniform 500 with a reference id
+- [~] Error monitoring: the hook exists (one catch point in `RequestContextMiddleware`) and is documented; **no tracker is installed or enabled**
+- [x] Security headers on API responses and web pages (CSP in production builds; HSTS in production). Known gap: page CSP allows `'unsafe-inline'`
+- [x] Database: indexes reviewed (no new ones needed), bounded connection pool, connection recycling, 30 s statement timeout on API queries (integration-tested against PostgreSQL)
+- [~] Docker hardening: `no-new-privileges`, `cap_drop: ALL`, read-only root filesystem + tmpfs, API port on loopback, `FORWARDED_ALLOW_IPS`, `--no-access-log`. **Not run locally (no Docker here); verified only by the CI Compose smoke test**
+- [x] CI/CD: `pip-audit` + `npm audit` workflow (push, pull request, weekly), Dependabot for Python, npm, Actions and Docker. A release/image-publishing workflow was deliberately not added (could not be tested)
+- [x] Docs: `docs/operations.md`
+- **Exit:** CI green including integration tests and Compose smoke test: _pending the push of this phase_.
+
+Verified locally (Windows, PostgreSQL 16 + pgvector 0.6.2, no Docker):
+- 450 unit tests (new: limiter rules/windows/Redis behaviour and fail-open, middleware, request ids, JSON log format, 429 behaviour on real routes, config validation) and 93 integration tests (new: statement timeout and pool bounds)
+- ruff, ruff format and mypy clean; 13 Playwright tests pass in Edge against a production build with the new CSP and headers
+- `pip-audit` (pinned runtime requirements) and `npm audit --omit=dev`: no known vulnerabilities on 2026-11-18
+
+Findings worth remembering:
+- Behind the Next.js proxy every request reaches the API from the frontend container, so per-IP limits would count all users as one client unless uvicorn trusts `X-Forwarded-For`. Compose now sets `FORWARDED_ALLOW_IPS=*` and publishes the API on `127.0.0.1` only; `docs/operations.md` explains when `*` is unsafe.
+- Tests default to `RATE_LIMIT_ENABLED=false` (the limiter keeps state, so it would leak between tests); the rate-limit tests opt in with an in-memory limiter and tiny limits.
 
 ## Phase 11 — Portfolio Presentation
 

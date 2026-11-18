@@ -1,8 +1,8 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Response, status
+from fastapi import APIRouter, Cookie, Depends, Response, status
 
-from app.api.deps import AuthServiceDep, SettingsDep
+from app.api.deps import AuthServiceDep, RateLimitsDep, SettingsDep, limit_by_ip
 from app.core.config import Settings
 from app.core.errors import AuthenticationError
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserRead
@@ -35,22 +35,38 @@ def _token_response(pair: TokenPair) -> TokenResponse:
     return TokenResponse(access_token=pair.access_token, expires_in=pair.expires_in)
 
 
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(limit_by_ip("register_ip"))],
+)
 async def register(body: RegisterRequest, auth: AuthServiceDep) -> UserRead:
     user = await auth.register(email=body.email, password=body.password)
     return UserRead.model_validate(user)
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login", response_model=TokenResponse, dependencies=[Depends(limit_by_ip("login_ip"))]
+)
 async def login(
-    body: LoginRequest, response: Response, auth: AuthServiceDep, settings: SettingsDep
+    body: LoginRequest,
+    response: Response,
+    auth: AuthServiceDep,
+    settings: SettingsDep,
+    limits: RateLimitsDep,
 ) -> TokenResponse:
+    # Also per account (not only per address): guessing one password from many addresses
+    # is the attack a per-address limit cannot see.
+    await limits.enforce("login_email", body.email.strip().lower())
     _, pair = await auth.login(email=body.email, password=body.password)
     _set_refresh_cookie(response, pair.refresh_token, settings)
     return _token_response(pair)
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post(
+    "/refresh", response_model=TokenResponse, dependencies=[Depends(limit_by_ip("refresh_ip"))]
+)
 async def refresh(
     response: Response,
     auth: AuthServiceDep,

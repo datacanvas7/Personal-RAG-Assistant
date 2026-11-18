@@ -51,7 +51,7 @@ def mark_stale_documents(engine: Engine, provider: EmbeddingProvider) -> list[uu
 
 
 def main() -> int:
-    configure_logging(get_settings().log_level)
+    configure_logging(get_settings().log_level, get_settings().log_format)
     provider = get_embedding_provider()
     ids = mark_stale_documents(get_sync_engine(), provider)
     for document_id in ids:

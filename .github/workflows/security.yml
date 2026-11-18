@@ -1,0 +1,43 @@
+name: Dependency audit
+
+# Separate from CI on purpose: a newly published advisory should not turn unrelated pull
+# requests red, but it should be seen. Runs on every push and pull request (so a vulnerable
+# dependency is caught when it is added) and weekly (so one disclosed later is caught too).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python dependencies (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+      # requirements.txt is the pinned runtime set the Docker image installs (CI checks that
+      # it matches uv.lock). --no-deps: every transitive package is already pinned in it.
+      - run: uvx pip-audit --requirement backend/requirements.txt --no-deps --disable-pip
+
+  node:
+    name: Node dependencies (npm audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --omit=dev --ignore-scripts --no-fund
+      # Production dependencies only; dev tooling does not ship in the image.
+      - run: npm audit --omit=dev --audit-level=high

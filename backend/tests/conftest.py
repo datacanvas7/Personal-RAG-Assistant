@@ -14,6 +14,8 @@ import sys
 import pytest
 
 os.environ.setdefault("ENVIRONMENT", "test")
+# Rate limiting is switched on explicitly by the tests that cover it.
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 os.environ.setdefault("POSTGRES_PASSWORD", "test-password")
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-key-not-for-real-use-0123456789")
 

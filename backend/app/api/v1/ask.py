@@ -1,13 +1,13 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from app.api.deps import CurrentUserDep, RagServiceDep
+from app.api.deps import CurrentUserDep, RagServiceDep, limit_by_user
 from app.llm.base import ChatMessage
 from app.schemas.ask import AskRequest, AskResponse, SourceOut
 
 router = APIRouter(prefix="/ask", tags=["ask"])
 
 
-@router.post("", response_model=AskResponse)
+@router.post("", response_model=AskResponse, dependencies=[Depends(limit_by_user("ask_user"))])
 async def ask(body: AskRequest, user: CurrentUserDep, service: RagServiceDep) -> AskResponse:
     """Answer a question from the caller's own documents, with citations.
 

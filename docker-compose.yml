@@ -2,14 +2,16 @@
 #   docker compose up --build        start everything
 #   docker compose up --build --wait start and block until all health checks pass
 #
-# Only the frontend (3000) and the API (8000) are published. Postgres and Redis are
-# reachable from other containers, and from the host only on loopback.
+# Only the frontend (3000) is published to the network. The API (8000), Postgres and Redis
+# are reachable from other containers, and from the host only on loopback.
 
 name: personal-rag-assistant
 
 x-backend-environment: &backend-environment
   ENVIRONMENT: ${ENVIRONMENT:-development}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-text}
+  ENABLE_API_DOCS: ${ENABLE_API_DOCS:-}
   POSTGRES_HOST: postgres
   POSTGRES_PORT: "5432"
   POSTGRES_DB: ${POSTGRES_DB:-rag}
@@ -41,6 +43,10 @@ x-backend-environment: &backend-environment
   LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-}
   RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-5}
   RETRIEVAL_SCORE_THRESHOLD: ${RETRIEVAL_SCORE_THRESHOLD:-0.45}
+  RETRIEVAL_MODE: ${RETRIEVAL_MODE:-hybrid}
+  RETRIEVAL_RERANK: ${RETRIEVAL_RERANK:-false}
+  RETRIEVAL_CANDIDATE_MULTIPLIER: ${RETRIEVAL_CANDIDATE_MULTIPLIER:-4}
+  QUERY_CONDENSING: ${QUERY_CONDENSING:-true}
   MAX_CONTEXT_CHARS: ${MAX_CONTEXT_CHARS:-12000}
   CHAT_HISTORY_MAX_MESSAGES: ${CHAT_HISTORY_MAX_MESSAGES:-6}
   # API and worker share this volume: the API writes uploads, the worker reads them.
@@ -48,6 +54,28 @@ x-backend-environment: &backend-environment
   MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
   CHUNK_SIZE_CHARS: ${CHUNK_SIZE_CHARS:-1500}
   CHUNK_OVERLAP_CHARS: ${CHUNK_OVERLAP_CHARS:-200}
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+  DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+  DB_POOL_TIMEOUT_SECONDS: ${DB_POOL_TIMEOUT_SECONDS:-30}
+  DB_POOL_RECYCLE_SECONDS: ${DB_POOL_RECYCLE_SECONDS:-1800}
+  DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-30000}
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+  RATE_LIMIT_LOGIN_IP: ${RATE_LIMIT_LOGIN_IP:-20/1m}
+  RATE_LIMIT_LOGIN_EMAIL: ${RATE_LIMIT_LOGIN_EMAIL:-10/15m}
+  RATE_LIMIT_REGISTER_IP: ${RATE_LIMIT_REGISTER_IP:-10/1h}
+  RATE_LIMIT_REFRESH_IP: ${RATE_LIMIT_REFRESH_IP:-60/1m}
+  RATE_LIMIT_UPLOAD_USER: ${RATE_LIMIT_UPLOAD_USER:-60/1h}
+  RATE_LIMIT_ASK_USER: ${RATE_LIMIT_ASK_USER:-30/1m}
+  RATE_LIMIT_SEARCH_USER: ${RATE_LIMIT_SEARCH_USER:-120/1m}
+
+# Containers run as non-root already; these remove what they do not need on top of that:
+# no privilege escalation, no Linux capabilities, an immutable root filesystem. The only
+# writable places are the named volumes and a small in-memory /tmp.
+x-hardened: &hardened
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  read_only: true
+  tmpfs: ["/tmp"]
 
 x-backend-build: &backend-build
   context: ./backend
@@ -97,6 +125,7 @@ services:
   migrate:
     build: *backend-build
     restart: "no"
+    <<: *hardened
     command: ["alembic", "upgrade", "head"]
     environment: *backend-environment
     depends_on:
@@ -107,12 +136,19 @@ services:
   backend:
     build: *backend-build
     restart: unless-stopped
-    environment: *backend-environment
+    <<: *hardened
+    environment:
+      <<: *backend-environment
+      # The Next.js proxy is the only client on the compose network and it sets
+      # X-Forwarded-For with the browser's address, so trust it: otherwise every per-IP
+      # rate limit would count all users as the frontend container. Safe because the
+      # port below is published on loopback only.
+      FORWARDED_ALLOW_IPS: "*"
     volumes:
       - uploads:/data/uploads
       - models:/data/models
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -136,6 +172,7 @@ services:
   worker:
     build: *backend-build
     restart: unless-stopped
+    <<: *hardened
     # Same image as the API, different process. The explicit node name lets the health
     # check address this worker.
     command:
@@ -171,6 +208,9 @@ services:
       args:
         BACKEND_INTERNAL_URL: http://backend:8000
     restart: unless-stopped
+    <<: *hardened
+    # Next.js caches rendered output here at run time.
+    tmpfs: ["/tmp", "/app/.next/cache"]
     ports:
       - "3000:3000"
     depends_on:
