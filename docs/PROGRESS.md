@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 9 — implemented and verified locally, not yet pushed**; Phase 8 CI fix committed locally; a real Gemini run with your key is still open from Phase 5 (2026-11-18)
+Current phase: **Phase 9 — done, CI green (backend, frontend, Playwright browser tests and Docker Compose smoke test, run `e1b3b3f`)**; a real Gemini run with your key is still open from Phase 5 (2026-11-18)
 
 ---
 
@@ -210,7 +210,7 @@ server's real value once `/settings` loads); the delete dialog lost the file nam
 
 Not yet done or verified: **logout** was not exercised in the browser (it is covered only by the
 code path and the client tests); the full backend suite has not been rerun since `deps.py` changed
-(baseline 336 unit + 57 integration); CI has not run on Phase 7; nothing was run in Docker.
+(baseline 336 unit + 57 integration); CI later ran green on Phases 7-9, including the Docker Compose smoke test (2026-11-18).
 
 Deviations from the plan: the documents API has no search parameter, so search and the status
 filter work on the newest 100 documents already loaded (the page says so when there are more);
