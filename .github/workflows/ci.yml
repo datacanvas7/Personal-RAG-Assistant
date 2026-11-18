@@ -130,8 +130,9 @@ jobs:
           nohup npm start -- -p 3100 > "$RUNNER_TEMP/web.log" 2>&1 &
       - name: Wait for both servers
         run: |
-          # /docs, not /health: the health check also asks for Redis, which this job does not run.
-          for url in http://127.0.0.1:8000/docs http://127.0.0.1:3100/login; do
+          # The API docs page, not /health: the health check also asks for Redis, which this
+          # job does not run.
+          for url in http://127.0.0.1:8000/api/v1/docs http://127.0.0.1:3100/login; do
             for i in $(seq 1 60); do
               curl -fsS -o /dev/null "$url" && break
               [ "$i" = 60 ] && { echo "timed out waiting for $url"; cat "$RUNNER_TEMP"/*.log; exit 1; }
