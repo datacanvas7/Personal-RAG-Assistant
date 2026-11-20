@@ -101,7 +101,7 @@ pyjwt==2.15.1
     # via personal-rag-assistant-backend
 pymupdf==1.28.2
     # via personal-rag-assistant-backend
-python-dateutil==2.9.0.post0
+python-dateutil==4.0.0
     # via celery
 python-docx==1.2.0
     # via personal-rag-assistant-backend
