@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1
 
 # ---- deps: install exactly what package-lock.json specifies -------------------------
-FROM node:24-slim AS deps
+FROM node:26-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 
 # ---- build -----------------------------------------------------------------------------
-FROM node:24-slim AS build
+FROM node:26-slim AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -21,7 +21,7 @@ COPY . .
 RUN npm run build
 
 # ---- runtime: standalone server only (no node_modules, no source) --------------------
-FROM node:24-slim AS runtime
+FROM node:26-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
