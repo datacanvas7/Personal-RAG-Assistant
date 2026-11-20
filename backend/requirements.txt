@@ -38,9 +38,9 @@ click-repl==0.4.1
     # via celery
 dnspython==2.9.2
     # via email-validator
-email-validator==2.3.0
+email-validator==2.4.0
     # via personal-rag-assistant-backend
-fastapi==0.162.5
+fastapi==0.163.1
     # via personal-rag-assistant-backend
 greenlet==3.5.6
     # via sqlalchemy
@@ -48,11 +48,11 @@ h11==0.16.0
     # via
     #   httpcore2
     #   uvicorn
-httpcore2==2.16.0 ; sys_platform != 'emscripten'
+httpcore2==2.16.2 ; sys_platform != 'emscripten'
     # via httpx2
 httptools==0.9.0
     # via uvicorn
-httpx2==2.16.0
+httpx2==2.16.2
     # via openai
 httpx2-jsfetch==1.0 ; sys_platform == 'emscripten'
     # via httpx2
@@ -71,7 +71,7 @@ mako==1.4.3
     # via alembic
 markupsafe==3.0.4
     # via mako
-openai==3.51.0
+openai==3.52.0
     # via personal-rag-assistant-backend
 opentelemetry-api==1.45.2
     # via fastapi
@@ -109,7 +109,7 @@ python-dotenv==1.2.4
     # via
     #   pydantic-settings
     #   uvicorn
-python-multipart==0.0.33
+python-multipart==0.0.34
     # via personal-rag-assistant-backend
 pyyaml==6.0.3
     # via uvicorn
@@ -121,7 +121,7 @@ six==1.17.0
     # via python-dateutil
 sniffio==1.3.1
     # via openai
-sqlalchemy==2.1.8
+sqlalchemy==2.1.9
     # via
     #   alembic
     #   personal-rag-assistant-backend
