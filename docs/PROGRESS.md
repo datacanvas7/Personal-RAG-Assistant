@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 10 — implemented and verified locally; CI run pending** (Phase 9 closed green on `e1b3b3f`); a real Gemini run with your key is still open from Phase 5 (2026-11-18)
+Current phase: **Phase 10 — complete, CI green on `4c1297d`** (Phase 9 closed green on `e1b3b3f`); a real Gemini run with your key is still open from Phase 5 (2026-11-18)
 
 ---
 
@@ -268,10 +268,10 @@ Findings worth remembering:
 - [~] Error monitoring: the hook exists (one catch point in `RequestContextMiddleware`) and is documented; **no tracker is installed or enabled**
 - [x] Security headers on API responses and web pages (CSP in production builds; HSTS in production). Known gap: page CSP allows `'unsafe-inline'`
 - [x] Database: indexes reviewed (no new ones needed), bounded connection pool, connection recycling, 30 s statement timeout on API queries (integration-tested against PostgreSQL)
-- [~] Docker hardening: `no-new-privileges`, `cap_drop: ALL`, read-only root filesystem + tmpfs, API port on loopback, `FORWARDED_ALLOW_IPS`, `--no-access-log`. **Not run locally (no Docker here); verified only by the CI Compose smoke test**
+- [x] Docker hardening: `no-new-privileges`, `cap_drop: ALL`, read-only root filesystem + tmpfs, API port on loopback, `FORWARDED_ALLOW_IPS`, `--no-access-log`. Not runnable locally (no Docker here); verified by the CI Compose smoke test, which starts the hardened stack and runs register/login, a worker task and upload, embedding and search with the real model
 - [x] CI/CD: `pip-audit` + `npm audit` workflow (push, pull request, weekly), Dependabot for Python, npm, Actions and Docker. A release/image-publishing workflow was deliberately not added (could not be tested)
 - [x] Docs: `docs/operations.md`
-- **Exit:** CI green including integration tests and Compose smoke test: _pending the push of this phase_.
+- **Exit:** CI green including integration tests and Compose smoke test: **met on `4c1297d`** (CI and Dependency audit workflows both green). The first push (`e5462f3`) failed the Compose smoke test: Compose passes unset optional variables as empty strings and `ENABLE_API_DOCS=""` was not a valid boolean, so the migrate container crashed. Fixed with a validator and a regression test; CI now also prints each service's last log lines as annotations on failure.
 
 Verified locally (Windows, PostgreSQL 16 + pgvector 0.6.2, no Docker):
 - 450 unit tests (new: limiter rules/windows/Redis behaviour and fail-open, middleware, request ids, JSON log format, 429 behaviour on real routes, config validation) and 93 integration tests (new: statement timeout and pool bounds)
