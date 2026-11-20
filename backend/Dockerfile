@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- builder: resolve and install locked dependencies into a virtualenv -------------
-FROM python:3.13-slim-bookworm AS builder
+FROM python:3.15-slim-bookworm AS builder
 
 # uv is copied from its official image rather than installed with pip.
 COPY --from=ghcr.io/astral-sh/uv:0.13.8 /uv /usr/local/bin/uv
@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project $extra
 
 # ---- runtime: no build tools, no uv, non-root ----------------------------------------
-FROM python:3.13-slim-bookworm AS runtime
+FROM python:3.15-slim-bookworm AS runtime
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
