@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -159,6 +159,12 @@ class Settings(BaseSettings):
     # models with room to spare.
     chunk_size_chars: int = Field(default=1500, ge=200)
     chunk_overlap_chars: int = Field(default=200, ge=0)
+
+    @field_validator("enable_api_docs", mode="before")
+    @classmethod
+    def _empty_means_unset(cls, value: object) -> object:
+        # docker-compose passes unset optional variables as empty strings (${VAR:-}).
+        return None if isinstance(value, str) and not value.strip() else value
 
     @model_validator(mode="after")
     def _check_chunking(self) -> Self:

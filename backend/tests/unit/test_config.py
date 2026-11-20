@@ -130,3 +130,14 @@ def test_database_pool_settings_have_safe_defaults() -> None:
     assert settings.db_statement_timeout_ms == 30_000
     with pytest.raises(ValidationError):
         Settings(postgres_password="x", db_statement_timeout_ms=0)
+
+
+def test_an_empty_enable_api_docs_means_unset_as_docker_compose_passes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENABLE_API_DOCS", "")
+
+    settings = Settings(postgres_password="x")
+
+    assert settings.enable_api_docs is None
+    assert settings.api_docs_enabled  # development default
