@@ -99,7 +99,7 @@ pydantic-settings==2.16.3
     # via personal-rag-assistant-backend
 pyjwt==2.15.1
     # via personal-rag-assistant-backend
-pymupdf==1.28.2
+pymupdf==2.1
     # via personal-rag-assistant-backend
 python-dateutil==2.9.0.post0
     # via celery
