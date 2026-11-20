@@ -245,6 +245,14 @@ jobs:
           print('isolation ok')"
       - name: Logs on failure
         if: failure()
-        run: docker compose logs --no-color --tail=100
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail=100
+          # Also surface the tail of each service as an annotation: annotations are readable
+          # from the run summary and the API without opening the raw job log.
+          for svc in $(docker compose ps -a --services); do
+            tail=$(docker compose logs --no-color --tail=15 "$svc" 2>&1 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=compose logs: $svc::${tail:0:3500}"
+          done
       - if: always()
         run: docker compose down --volumes
