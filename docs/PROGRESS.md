@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 11 — implemented, awaiting CI** (Phase 10 closed green on `4c1297d`); a real Gemini run with your key is still open from Phase 5 (2026-11-20)
+Current phase: **Phase 11 — complete, CI green on `b5b6261`** (Phase 10 closed green on `4c1297d`); a real Gemini run with your key is still open from Phase 5 (2026-11-20)
 
 ---
 
@@ -291,6 +291,8 @@ Findings worth remembering:
 - [x] Interview talking points: `docs/interview.md`, including what not to claim.
 - [~] **Exit:** a new developer can run the project from the README alone. The README commands are replayed by CI (stack start, auth, upload, search, demo seed), but no person has followed it on a clean machine yet.
 
+CI result (`b5b6261`, all four jobs green): the compose smoke test ran the README commands with the real embedding model, including the new demo-dataset step (seed script, a re-run that skips all four files, and the expected file and page as the top search hit for each of the four demo questions). The first Phase 11 run (`2c31a61`) had a red Playwright job with no readable cause; the same job passed on the next commit with no app or test change, so it was most likely a flake (not proven). The browser job now reports failures and server-log tails as annotations so a repeat is diagnosable.
+
 Corrections made while writing: `.env.example` and this file claimed the relevance threshold would be tuned in Phase 11; nothing in the evaluation tuned it, so both now say it is untuned.
 
 ---
@@ -314,7 +316,7 @@ commands in CI.
 - [x] Conversations persisted
 - [x] User data isolated (tests plus the Compose smoke test)
 - [x] Frontend works on desktop and mobile (browser tests, mobile layout screenshot)
-- [x] Automated tests pass (CI green on `4c1297d`; Phase 11 not yet through CI)
+- [x] Automated tests pass (CI green on `b5b6261`, Phase 11 included)
 - [x] Docker Compose starts the application (CI)
 - [x] Documentation complete
 - [~] New developer can run it from the README (commands replayed in CI; no human fresh run)
