@@ -145,6 +145,15 @@ jobs:
       - name: Run the browser tests
         working-directory: frontend
         run: npm run e2e
+      - name: Server logs as annotations when a test fails
+        if: failure()
+        run: |
+          # Job logs need a sign-in to read; annotations do not.
+          for name in api web; do
+            file="$RUNNER_TEMP/$name.log"
+            [ -f "$file" ] || continue
+            echo "::error title=${name} log (last lines)::$(tail -n 25 "$file" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | cut -c1-3500)"
+          done
       - name: Keep the report and server logs when a test fails
         if: failure()
         uses: actions/upload-artifact@v5
