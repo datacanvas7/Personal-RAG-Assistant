@@ -156,7 +156,7 @@ jobs:
           done
       - name: Keep the report and server logs when a test fails
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: |
