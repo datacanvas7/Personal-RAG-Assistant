@@ -243,6 +243,35 @@ jobs:
           import sys, json
           assert json.load(sys.stdin)['results'] == [], 'another user must get nothing'
           print('isolation ok')"
+      - name: Demo dataset loads with the README command and is searchable (real model)
+        run: |
+          set -euo pipefail
+          python3 scripts/seed_demo.py --timeout 240
+          python3 scripts/seed_demo.py | grep -c 'already uploaded' | grep -qx 4   # idempotent re-run
+          python3 - <<'EOF'
+          import json, urllib.request
+          base = "http://localhost:3000/api/v1"
+          def call(path, body, token=None):
+              headers = {"Content-Type": "application/json"}
+              if token:
+                  headers["Authorization"] = "Bearer " + token
+              request = urllib.request.Request(base + path, json.dumps(body).encode(), headers)
+              return json.load(urllib.request.urlopen(request))
+          token = call("/auth/login", {"email": "demo@example.com", "password": "demo-passphrase-2026"})["access_token"]
+          expected = {
+              "How often must I change my password?": ("northwind-security-policy.md", None),
+              "What does error E-4471 mean and how do I reset it?": ("pump-station-ps7-field-manual.pdf", 3),
+              "How much parental leave does the second parent get?": ("northwind-leave-and-benefits.md", None),
+              "What is the hotel limit per night when travelling?": ("northwind-remote-work-and-travel.md", None),
+          }
+          for question, (filename, page) in expected.items():
+              hits = call("/search", {"query": question, "top_k": 3}, token)["results"]
+              assert hits, f"no results for: {question}"
+              top = hits[0]
+              print(f"{question!r} -> {top['filename']} p{top['page_number']} score {top['score']}")
+              assert top["filename"] == filename and top["page_number"] == page, top
+          print("demo dataset ok")
+          EOF
       - name: Logs on failure
         if: failure()
         run: |

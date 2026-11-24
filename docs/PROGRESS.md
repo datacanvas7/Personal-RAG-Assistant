@@ -5,7 +5,7 @@ Updated at the end of every phase. A box is ticked only when the item is impleme
 
 Legend: `[x]` done and verified · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
-Current phase: **Phase 10 — complete, CI green on `4c1297d`** (Phase 9 closed green on `e1b3b3f`); a real Gemini run with your key is still open from Phase 5 (2026-11-18)
+Current phase: **Phase 11 — implemented, awaiting CI** (Phase 10 closed green on `4c1297d`); a real Gemini run with your key is still open from Phase 5 (2026-11-20)
 
 ---
 
@@ -155,7 +155,7 @@ providers, selected by `LLM_BASE_URL` / `LLM_MODEL` (there is no `LLM_PROVIDER`)
 target speaks the same protocol. `/ask` is stateless; stored conversations and streaming are
 Phase 6. There is no question-rewriting step, so a follow-up like "and the second one?" is
 searched as written (Phase 9; it would also spend a second free-tier request per question). The
-0.45 threshold is a starting point, not tuned on real documents (Phase 11 evaluation). The
+0.45 threshold is a starting point, not tuned on real documents (the Phase 9 evaluation did not address it; see `docs/roadmap.md`). The
 default model name `gemini-3.5-flash-lite` came from Google's docs on 2026-11-14 and is not
 confirmed to be on the free tier for your key — `check_llm` shows what you can use. The context
 budget counts characters, not tokens. Documents are not scanned for injection beyond the
@@ -284,31 +284,37 @@ Findings worth remembering:
 
 ## Phase 11 — Portfolio Presentation
 
-- [ ] README with diagrams and screenshots
-- [ ] Remaining docs complete
-- [ ] Demo dataset and seed script
-- [ ] Demo video script
-- [ ] Interview talking points
-- **Exit:** a new developer can run the project from the README alone.
+- [x] README with diagrams and screenshots: rewritten (overview, problem, features, architecture and pipeline diagrams, stack, schema, screenshots, quick start incl. the Windows long-path caveat, configuration, Docker, API, testing, deployment, limitations). Concrete claims were checked against the code. The screenshots predate Phase 11 and come from the stand-in LLM; the README says so.
+- [x] Remaining docs complete: `docs/decisions.md`, `docs/deployment.md` (secrets, HTTPS, persistent storage, backups, monitoring), `docs/roadmap.md`. The deployment steps are standard practice for this layout but have **not** been run on a real server (the doc says so).
+- [x] Demo dataset and seed script: three fictional Markdown policies and a 3-page fictional PDF in `demo/documents`, `scripts/seed_demo.py` (stdlib only, idempotent), `demo/README.md` with questions and expected answers. Verified locally against the real API on PostgreSQL with the stand-in embedder: account created, four files uploaded and `ready` (1 + 1 + 1 + 3 passages), search finds the expected documents (page 3 for `E-4471`). With that stand-in embedder `/ask` refused every sample question because short questions score below the 0.45 threshold against whole-document passages; that is a property of the stand-in, **not** evidence about the real model. A CI step now replays the README command on the Compose stack with the real embedding model and asserts the top search hit for four questions; its result is recorded below once CI has run.
+- [x] Demo video script: `docs/demo-script.md` (about 4 minutes, shot list and narration). The video itself is not recorded.
+- [x] Interview talking points: `docs/interview.md`, including what not to claim.
+- [~] **Exit:** a new developer can run the project from the README alone. The README commands are replayed by CI (stack start, auth, upload, search, demo seed), but no person has followed it on a clean machine yet.
+
+Corrections made while writing: `.env.example` and this file claimed the relevance threshold would be tuned in Phase 11; nothing in the evaluation tuned it, so both now say it is untuned.
 
 ---
 
 ## Definition of Done (project)
 
-- [ ] Register and log in
-- [ ] Upload supported documents
-- [ ] Asynchronous processing
-- [ ] Correct text extraction
-- [ ] Appropriate chunking
-- [ ] Embeddings generated and stored in pgvector
-- [ ] Semantic retrieval works
-- [ ] Questions answered from documents, grounded in retrieved context
-- [ ] Accurate source citations
-- [ ] Streaming works
-- [ ] Conversations persisted
-- [ ] User data isolated
-- [ ] Frontend works on desktop and mobile
-- [ ] Automated tests pass
-- [ ] Docker Compose starts the application
-- [ ] Documentation complete
-- [ ] New developer can run it from the README
+Evidence: unit, integration and browser tests plus the Compose smoke test, all in CI.
+`[~]` marks items verified only with a stand-in language model or only by replaying the
+commands in CI.
+
+- [x] Register and log in
+- [x] Upload supported documents
+- [x] Asynchronous processing (real worker in the Compose smoke test)
+- [x] Correct text extraction
+- [x] Appropriate chunking (five sizes compared; the evaluation set is saturated, so this shows no size is wrong, not that one is best)
+- [x] Embeddings generated and stored in pgvector (real model in CI)
+- [x] Semantic retrieval works (hybrid; measured in `docs/evaluation.md`)
+- [~] Questions answered from documents, grounded in retrieved context (pipeline tested with a stand-in LLM; no real-Gemini run recorded)
+- [~] Accurate source citations (marker-to-passage resolution tested; not checked against real model output)
+- [~] Streaming works (SSE tested end to end in the browser with the stand-in LLM; not against Gemini)
+- [x] Conversations persisted
+- [x] User data isolated (tests plus the Compose smoke test)
+- [x] Frontend works on desktop and mobile (browser tests, mobile layout screenshot)
+- [x] Automated tests pass (CI green on `4c1297d`; Phase 11 not yet through CI)
+- [x] Docker Compose starts the application (CI)
+- [x] Documentation complete
+- [~] New developer can run it from the README (commands replayed in CI; no human fresh run)
