@@ -43,7 +43,7 @@ jobs:
       JWT_SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
@@ -106,7 +106,7 @@ jobs:
       E2E_PORT: "8000"
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock

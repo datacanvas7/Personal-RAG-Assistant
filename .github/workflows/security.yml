@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
       # requirements.txt is the pinned runtime set the Docker image installs (CI checks that
       # it matches uv.lock). --no-deps: every transitive package is already pinned in it.
       - run: uvx pip-audit --requirement backend/requirements.txt --no-deps --disable-pip
